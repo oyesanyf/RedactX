@@ -1,0 +1,25 @@
+# Python environments & caches
+.venv*/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Model weights & checkpoints (2 GB+, exceeds GitHub's 100 MB limit; publish to Hugging Face instead)
+models/
+*.safetensors
+*.pt
+*.bin
+*.gguf
+
+# Secrets
+.env
+.env.*
+
+# Local scratch output / logs
+test_out.txt
+test_err.txt
+test1234.txt
+test_314.txt
+*.log

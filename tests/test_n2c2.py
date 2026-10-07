@@ -165,9 +165,10 @@ def test_n2c2_calibration_source_uses_train_split_only(corpus):
     assert load_n2c2_calibration(corpus, 50, 200)[0] == pos
 
 
-def test_calibrate_cli_requires_n2c2_dir():
+def test_calibrate_cli_source_validation(tmp_path):
     from calibrate_thresholds import main
     with pytest.raises(SystemExit):
-        main(["--model-dir", ".", "--sources", "n2c2"])
+        main(["--model-dir", ".", "--sources", "n2c2", "--n2c2-dir", str(tmp_path / "nonexistent")])
     with pytest.raises(SystemExit):
         main(["--model-dir", ".", "--sources", "generator,i2b2"])
+

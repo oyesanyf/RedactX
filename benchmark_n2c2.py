@@ -88,12 +88,14 @@ def window_metrics(docs: List[Dict], key: str, max_chars: int) -> Dict:
 def run(args) -> Dict:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    from redactx.data.n2c2 import load_n2c2
+    from redactx.data.n2c2 import load_n2c2, resolve_n2c2_dir
     from redactx.production.detectors import (PresidioDetector, RedactXDetector, merge_findings,
                                               validator_findings)
     from redactx.production.validators import StructuredIdValidator
 
-    docs, report = load_n2c2(args.n2c2_dir, args.split, args.limit)
+    n2c2_dir = resolve_n2c2_dir(args.n2c2_dir)
+    print(f"Using n2c2 corpus: {os.path.abspath(n2c2_dir)}", flush=True)
+    docs, report = load_n2c2(n2c2_dir, args.split, args.limit)
     print(f"n2c2 2014 {args.split}: {report['files']} notes, {report['tags']} PHI tags "
           f"(exact offsets {report['exact']}, relocated {report['relocated']}, dropped {report['dropped']})", flush=True)
 
@@ -200,7 +202,7 @@ def print_tables(OUT: Dict) -> None:
 def main(argv=None):
     ap = argparse.ArgumentParser(description="RedactX vs Presidio on n2c2 2014 (per HIPAA category)")
     ap.add_argument("--model-dir", default="./models/RedactX-v3")
-    ap.add_argument("--n2c2-dir", required=True, help="folder containing the unpacked n2c2 2014 de-id release")
+    ap.add_argument("--n2c2-dir", default=None, help="folder containing the unpacked n2c2 2014 de-id release (default: auto-discover under data/)")
     ap.add_argument("--split", default="test", choices=["test", "train"])
     ap.add_argument("--limit", type=int, default=None, help="first N notes only")
     ap.add_argument("--device", default=None)

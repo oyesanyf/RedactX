@@ -24,3 +24,11 @@ test_err.txt
 test1234.txt
 test_314.txt
 *.log
+n2c2_results.json
+validation_results.json
+
+
+# Clinical / research datasets (DUA-restricted, large archives)
+data/
+/data/
+

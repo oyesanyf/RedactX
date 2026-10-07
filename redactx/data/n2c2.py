@@ -135,8 +135,43 @@ def find_split_dirs(root: str, split: str) -> List[str]:
     return sorted(set(found))
 
 
-def load_n2c2(root: str, split: str = "test", limit: Optional[int] = None) -> Tuple[List[Dict], Dict]:
-    """Loads one split. Raises FileNotFoundError with instructions if the corpus is not there."""
+def resolve_n2c2_dir(root: Optional[str] = None) -> str:
+    """
+    Resolves the directory containing n2c2 2014 data.
+    If an explicit root path is provided, it is returned directly.
+    Otherwise, checks:
+      1. Environment variable N2C2_DIR or REDACTX_N2C2_DIR
+      2. Standard local locations under data/ (e.g. data/n2c2-NLP-Research-Data-Sets/...)
+    """
+    if root and str(root).strip():
+        return str(root)
+    env_dir = os.environ.get("N2C2_DIR") or os.environ.get("REDACTX_N2C2_DIR")
+    if env_dir and os.path.isdir(env_dir):
+        return env_dir
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    candidates = [
+        os.path.join(repo_root, "data", "n2c2-NLP-Research-Data-Sets", "2014 - Deidentification & Heart Disease"),
+        os.path.join(repo_root, "data", "n2c2-2014"),
+        os.path.join(repo_root, "data"),
+        os.path.abspath("data/n2c2-NLP-Research-Data-Sets/2014 - Deidentification & Heart Disease"),
+        os.path.abspath("data/n2c2-2014"),
+        os.path.abspath("data"),
+    ]
+    for c in candidates:
+        if c and os.path.isdir(c):
+            for s in ("train", "test"):
+                try:
+                    if find_split_dirs(c, s):
+                        return c
+                except Exception:
+                    pass
+    return candidates[0]
+
+
+
+def load_n2c2(root: Optional[str] = None, split: str = "test", limit: Optional[int] = None) -> Tuple[List[Dict], Dict]:
+    """Loads one split. Auto-discovers root if omitted. Raises FileNotFoundError with instructions if not found."""
+    root = resolve_n2c2_dir(root)
     dirs = find_split_dirs(root, split)
     files = sorted(f for d in dirs for f in glob.glob(os.path.join(d, "*.xml")))
     if not files:

@@ -281,8 +281,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     unknown = set(sources) - {"ai4privacy", "pubmed", "generator", "n2c2"}
     if unknown:
         ap.error(f"unknown sources: {sorted(unknown)}")
-    if "n2c2" in sources and not args.n2c2_dir:
-        ap.error("source n2c2 needs --n2c2-dir (the corpus requires a DUA and is never downloaded)")
+    if "n2c2" in sources:
+        from redactx.data.n2c2 import resolve_n2c2_dir
+        args.n2c2_dir = resolve_n2c2_dir(args.n2c2_dir)
+        if not args.n2c2_dir or not os.path.isdir(args.n2c2_dir):
+            ap.error("source n2c2 requested but n2c2 data directory could not be found under data/; specify --n2c2-dir")
 
     from redactx.data.contrastive_corpus import replace_spans_with_generic
     from validate_model import load_ai4privacy_validation, load_pubmedqa_labeled

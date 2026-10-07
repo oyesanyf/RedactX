@@ -10,16 +10,16 @@
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![backbone](https://img.shields.io/badge/backbone-google%2Fvaultgemma--1b-4285F4)
 ![fine--tune](https://img.shields.io/badge/fine--tune-LoRA-8A2BE2)
-![benchmarks](https://img.shields.io/badge/v2%20benchmarks-pending-lightgrey)
+![benchmarks](https://img.shields.io/badge/v2%20benchmarks-measured-brightgreen)
 
 </div>
 
 > [!WARNING]
-> **The production service code is in place; a production-ready *model* is not yet proven.** The first checkpoint
-> (v1) performed poorly on held-out data (see [Benchmarks](#-benchmarks)). The training pipeline has been rebuilt
-> (v2, contrastive recipe + trained span head) and **v2 benchmark results will be published here once the training
-> run completes.** Until then deploy in `hybrid` (RedactX ∪ Presidio) or `presidio` mode, and complete the
-> [readiness checklist](docs/PRODUCTION.md#readiness-checklist) — including evaluation on real clinical notes —
+> **Not yet validated on real clinical notes.** RedactX v2 clearly beats both v1 and Presidio on the held-out
+> general-PII and synthetic-note benchmarks (see [Benchmarks](#-benchmarks)), and the production service code is in
+> place. It still over-flags some clean clinical-style text, and none of the benchmark sets are real clinical notes.
+> Deploy in `hybrid` mode (RedactX ∪ Presidio), calibrate thresholds, and complete the
+> [readiness checklist](docs/PRODUCTION.md#readiness-checklist) — including a clinical evaluation such as n2c2 2014 —
 > before processing real PHI.
 
 ---
@@ -314,37 +314,79 @@ All benchmark sets are **held out**: none of them is used by the contrastive tra
 documents. Spans are scored with `BenchmarkSuite.evaluate_spans` (a prediction is an exact hit if it overlaps a gold
 span with IoU ≥ 0.5 or a matching category).
 
-### RedactX v2 (contrastive recipe + span head)
+### RedactX v2 (contrastive recipe + span head) — measured
 
-> [!NOTE]
-> ⏳ **Pending.** Results will be added here after the full training run
-> (`--samples 2000 --epochs 3`) and its automatic benchmark complete.
+Checkpoint `models/RedactX-v2`: `--recipe-contrastive --samples 2000 --epochs 3` (4,478 training records,
+95 min training). Benchmark run automatically at the end of training, **uncalibrated** (doc and span threshold
+0.5). Source: `validation_results.json`.
 
-| Metric | RedactX v2 | Presidio |
-|---|---|---|
-| H — AUROC / specificity | *pending* | n/a |
-| G — accuracy / specificity / AUROC | *pending* | n/a |
-| G — span precision / recall / F1 | *pending* | *pending* |
-| P — accuracy / specificity / AUROC | *pending* | n/a |
-| P — span precision / recall / F1 | *pending* | *pending* |
-| Q — specificity | *pending* | n/a |
-| Latency (median / p95, `evaluate_text`) | *pending* | |
+**Document level** ("does this text contain PHI/PII?")
 
-**Deployment modes** (character-level, whitespace ignored; L = long documents of 5 joined ai4privacy docs, RedactX
-run through the production chunker):
+| Set | Accuracy | Recall | Specificity | AUROC | Brier | ECE | v1 for comparison |
+|---|---|---|---|---|---|---|---|
+| H (15 PHI / 15 clean) | 0.833 | 1.000 | 0.667 (5 of 15 clean flagged) | 1.000 | 0.155 | 0.182 | specificity 0.000, AUROC 0.562 |
+| G (140 PHI / 60 clean) | 0.840 | 1.000 | 0.467 (32 of 60 clean flagged) | 0.798 | 0.145 | 0.152 | acc 0.775, spec 0.250, AUROC 0.902 |
+| P (200 real PII / 200 clean twins) | 0.995 | 0.995 | 0.995 | 1.000 | 0.005 | 0.016 | — |
+| Q (100 PubMed abstracts, clean) | — | — | 0.990 (1 of 100 flagged) | — | — | — | — |
+
+**Spans, exact match** (IoU ≥ 0.5)
+
+| Set | RedactX v2 P / R / F1 | Presidio P / R / F1 | v1 P / R / F1 |
+|---|---|---|---|
+| G (812 gold spans) | 0.797 / **0.989** / **0.882** | 0.863 / 0.760 / 0.808 | 0.784 / 0.206 / 0.326 |
+| P (1,334 gold spans) | 0.874 / **0.786** / **0.828** | 0.890 / 0.494 / 0.635 | — |
+
+**Deployment modes: character-level** (whitespace ignored; L = 20 long documents of 5 joined ai4privacy docs,
+mean 1,618 chars, RedactX run through the production chunker)
 
 | Set — char precision / recall / F1 | RedactX v2 | Presidio | Hybrid (union) |
 |---|---|---|---|
-| G | *pending* | *pending* | *pending* |
-| P | *pending* | *pending* | *pending* |
-| L | *pending* | *pending* | *pending* |
+| G | 0.894 / 0.975 / **0.933** | 0.941 / 0.659 / 0.775 | 0.869 / **0.981** / 0.921 |
+| P | 0.896 / 0.955 / **0.925** | 0.896 / 0.679 / 0.773 | 0.853 / **0.972** / 0.908 |
+| L | 0.880 / 0.968 / **0.922** | 0.880 / 0.650 / 0.748 | 0.831 / **0.980** / 0.899 |
+| L without chunking (first 600 chars only) | 0.923 / 0.380 / 0.538 | | |
 
-**Per-HIPAA-category recall** on P (char-level) for RedactX / Presidio / Hybrid: *pending* — printed by
-`validate_model.py` and stored under `P_ai4privacy_val_per_category_recall` in `validation_results.json`.
+**Per-category recall on P** (character-level coverage of gold spans)
+
+| Category | n | RedactX v2 | Presidio | Hybrid |
+|---|---|---|---|---|
+| LOCATION | 290 | 0.974 | 0.573 | 0.989 |
+| NAME | 289 | 0.953 | 0.745 | 0.983 |
+| DATE | 167 | 0.989 | 0.863 | 0.996 |
+| DEMOGRAPHIC ² | 150 | 0.742 | 0.117 | 0.752 |
+| OTHER_ID | 105 | 0.968 | 0.621 | 0.988 |
+| EMAIL | 90 | 0.998 | 0.994 | 1.000 |
+| AGE | 78 | 0.826 | 0.483 | 0.886 |
+| PHONE | 66 | 0.989 | 0.529 | 0.991 |
+| LICENSE_NUMBER | 42 | 0.924 | 0.095 | 0.933 |
+| ACCOUNT_NUMBER | 34 | 0.944 | 0.830 | 0.996 |
+| SSN | 23 | 0.987 | 1.000 | 1.000 |
+
+² Not a HIPAA Safe Harbor identifier (e.g. gender, ethnicity); listed because ai4privacy annotates it.
+
+Latency of `engine.evaluate_text` (one ≤ 600-char window, GPU, 745 calls): median **110 ms**, p95 **168 ms**.
+
+**What these numbers say**
+
+- **Large improvement over v1.** v1 flagged every clean sentence (H specificity 0.000); v2 separates PHI from
+  clean text perfectly by ranking on H (AUROC 1.000) and finds 99% of gold spans on G, against 21% for v1.
+- **RedactX v2 finds far more identifiers than Presidio:** character recall 0.955 vs 0.679 on real PII (P) at equal
+  precision (0.896 both); on G its precision is lower (0.894 vs 0.941). The biggest recall gaps are on locations,
+  phone numbers, IDs and licence numbers.
+- **Hybrid gives the highest recall** (0.97–0.98 on every set) at a precision cost of 2.5–5 points versus RedactX
+  alone. For redaction, where a miss is a leak, that is the recommended trade-off.
+- **Chunking is required for long documents:** recall drops from 0.968 to 0.380 if only the first window is read.
+- **Weak spots:**
+  - The model still over-flags *clean clinical-style text*: 32 of 60 clean generator notes and 5 of 15 clean
+    handwritten sentences, at the uncalibrated 0.5 threshold. For redaction this costs over-redaction, not leaks.
+  - Ages (0.83–0.89 recall) and demographics (0.74–0.75) are the least-covered categories.
+  - P's clean twins are made with the same generic-replacement idea as the training negatives (from different
+    datasets), so P's near-perfect document scores are the most favourable setting for this recipe.
 
 > [!IMPORTANT]
-> None of these sets are clinical notes. Before production use, measure per-category recall on a clinical
-> de-identification corpus (e.g. n2c2 2014) and on your own annotated documents.
+> None of these sets are real clinical notes. Before production use, measure per-category recall on a clinical
+> de-identification corpus (e.g. n2c2 2014) and on your own annotated documents, with thresholds calibrated by
+> `calibrate_thresholds.py`.
 
 ### RedactX v1 (60/20/20 recipe) — measured, superseded
 
@@ -434,7 +476,8 @@ python -m pytest tests -q
 - [x] Long-document chunking with span stitching
 - [x] Hybrid RedactX ∪ Presidio mode, recall-targeted thresholds, per-HIPAA-category recall
 - [x] Hardened API server, batch CLI, Docker image, load tester
-- [ ] **Publish v2 benchmark results** (after full training run)
+- [x] **Publish v2 benchmark results**
+- [ ] Calibrate v2 thresholds and re-benchmark at the calibrated operating point
 - [ ] Evaluate on a clinical de-identification corpus (n2c2 2014)
 - [ ] Learned entity-type classification for spans
 - [ ] Publish weights to Hugging Face with a model card containing only measured results

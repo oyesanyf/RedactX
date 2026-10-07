@@ -129,6 +129,9 @@ def main():
     parser.add_argument("--clinical-pair-ratio", type=float, default=0.25,
                         help="Contrastive recipe: synthetic clinical PHI notes (each with its natural clean twin) "
                              "per PII doc. 0 = off. Default: 0.25")
+    parser.add_argument("--n2c2-train-ratio", type=float, default=0.25,
+                        help="Contrastive recipe: real n2c2 2014 clinical PHI windows (each with its generic-replaced twin) "
+                             "per PII doc. Auto-discovered from data/ if omitted. 0 = off. Default: 0.25")
     parser.add_argument("--span-category-weights", type=str, default="AGE=3,DEMOGRAPHIC=3",
                         help="Span-head loss weight per HIPAA category, e.g. 'AGE=3,DEMOGRAPHIC=3'. '' = off")
     parser.add_argument("--oversample-categories", type=str, default="AGE,DEMOGRAPHIC",
@@ -212,10 +215,13 @@ def main():
             span_category_weights=parse_category_weights(args.span_category_weights),
             oversample_categories=tuple(c.strip() for c in args.oversample_categories.split(",") if c.strip()),
             oversample_factor=args.oversample_factor,
+            local_notes_dir=args.local_notes_dir,
+            n2c2_train_ratio=args.n2c2_train_ratio,
         )
         print("\n[Corpus Composition - Contrastive Recipe]")
         print(f"  - PII docs (Nemotron-PII / Gretel):           {stats['pii_docs_nemotron']} / {stats['pii_docs_gretel']}")
         print(f"  - Synthetic clinical PHI/clean pairs:         {stats['clinical_pair_docs']}")
+        print(f"  - Real n2c2 clinical PHI/clean pairs:         {stats.get('n2c2_train_pair_docs', 0)}")
         print(f"  - Natural clean docs:                         {stats['natural_negative_docs']} {stats['natural_negative_sources']}")
         print(f"  - Clinical hard negatives:                    {stats['hard_negative_docs']} {stats['hard_negative_sources']}")
         print(f"  - Span category weights / oversampling:       {stats['span_category_weights']} / {stats['oversample']}")

@@ -253,16 +253,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--model-dir", required=True)
     ap.add_argument("--device", default=None)
     ap.add_argument("--target-recall", type=float, default=0.98)
-    ap.add_argument("--sources", default="ai4privacy,pubmed,generator",
-                    help="comma list of: ai4privacy, pubmed, generator, n2c2 (n2c2 needs --n2c2-dir)")
+    ap.add_argument("--sources", default="auto",
+                    help="comma list of: ai4privacy, pubmed, generator, n2c2, local_clean. Default 'auto' (includes all available)")
     ap.add_argument("--n-ai4privacy", type=int, default=300)
     ap.add_argument("--ai4privacy-offset", type=int, default=1000)
     ap.add_argument("--n-pubmed", type=int, default=150)
     ap.add_argument("--pubmed-offset", type=int, default=200)
     ap.add_argument("--n-generator", type=int, default=300)
     ap.add_argument("--generator-seed", type=int, default=4242)
-    ap.add_argument("--n2c2-dir", default=None, help="unpacked n2c2 2014 corpus (only the TRAIN split is used here)")
+    ap.add_argument("--n2c2-dir", default=None, help="unpacked n2c2 2014 corpus (default: auto-discover under data/)")
     ap.add_argument("--n-n2c2", type=int, default=300, help="n2c2 PHI windows to calibrate on")
+    ap.add_argument("--local-notes-dir", default=None, help="folder of local clinical notes e.g. data/test (default: auto-discover)")
+    ap.add_argument("--n-local-clean", type=int, default=150, help="local clean clinical windows to calibrate on")
     ap.add_argument("--max-chars", type=int, default=600)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--dry-run", action="store_true", help="print the result without writing the file")
@@ -277,18 +279,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    sources = [s.strip() for s in args.sources.split(",") if s.strip()]
-    unknown = set(sources) - {"ai4privacy", "pubmed", "generator", "n2c2"}
+
+    from redactx.data.n2c2 import resolve_n2c2_dir
+    args.n2c2_dir = resolve_n2c2_dir(args.n2c2_dir)
+    n2c2_found = bool(args.n2c2_dir and os.path.isdir(args.n2c2_dir))
+
+    from redactx.data.contrastive_corpus import replace_spans_with_generic, load_local_clinical_negatives
+    from validate_model import load_ai4privacy_validation, load_pubmedqa_labeled
+
+    local_clean_sample = load_local_clinical_negatives(args.local_notes_dir, max_samples=5, max_chars=args.max_chars)
+    local_found = bool(local_clean_sample)
+
+    if args.sources == "auto":
+        src_list = ["ai4privacy", "pubmed", "generator"]
+        if n2c2_found:
+            src_list.append("n2c2")
+        if local_found:
+            src_list.append("local_clean")
+        sources = src_list
+    else:
+        sources = [s.strip() for s in args.sources.split(",") if s.strip()]
+
+    unknown = set(sources) - {"ai4privacy", "pubmed", "generator", "n2c2", "local_clean"}
     if unknown:
         ap.error(f"unknown sources: {sorted(unknown)}")
-    if "n2c2" in sources:
-        from redactx.data.n2c2 import resolve_n2c2_dir
-        args.n2c2_dir = resolve_n2c2_dir(args.n2c2_dir)
-        if not args.n2c2_dir or not os.path.isdir(args.n2c2_dir):
-            ap.error("source n2c2 requested but n2c2 data directory could not be found under data/; specify --n2c2-dir")
-
-    from redactx.data.contrastive_corpus import replace_spans_with_generic
-    from validate_model import load_ai4privacy_validation, load_pubmedqa_labeled
+    if "n2c2" in sources and not n2c2_found:
+        ap.error("source n2c2 requested but n2c2 data directory could not be found under data/; specify --n2c2-dir")
 
     token = os.environ.get("HF_TOKEN")
     if not token and ("ai4privacy" in sources or "pubmed" in sources):
@@ -323,6 +339,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"n2c2 train: {rep['files']} notes, {rep['tags']} tags ({rep['relocated']} relocated, "
               f"{rep['dropped']} dropped), {rep['windows_with_phi']} PHI windows / "
               f"{rep['windows_without_phi']} PHI-free windows", flush=True)
+    if "local_clean" in sources:
+        ln_docs = load_local_clinical_negatives(args.local_notes_dir, max_samples=args.n_local_clean,
+                                               max_chars=args.max_chars, seed=args.generator_seed)
+        negatives += [d["text"] for d in ln_docs]
+        used.append(f"local-clinical-clean(windows={len(ln_docs)})")
     print(f"Calibration data: {len(positives)} PHI docs, {len(negatives)} clean docs ({', '.join(used)})", flush=True)
 
     from redactx.models.openjev import OpenJevVaultGemmaEngine

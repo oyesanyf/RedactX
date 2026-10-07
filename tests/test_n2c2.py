@@ -172,3 +172,67 @@ def test_calibrate_cli_source_validation(tmp_path):
     with pytest.raises(SystemExit):
         main(["--model-dir", ".", "--sources", "generator,i2b2"])
 
+
+def test_n2c2_training_pairs_and_local_clinical_negatives(corpus, tmp_path):
+    from redactx.data.contrastive_corpus import load_n2c2_training_pairs, load_local_clinical_negatives
+
+    # 1. n2c2 training pairs
+    pairs = load_n2c2_training_pairs(corpus, max_samples=10, max_chars=300)
+    assert len(pairs) > 0
+    for p in pairs:
+        assert p["source"] == "n2c2_train"
+        assert p["spans"]
+        assert "twin" in p and len(p["twin"]) > 0
+
+    # 2. Local clinical notes with surrogates
+    fake_notes_dir = tmp_path / "mimic_test"
+    fake_notes_dir.mkdir()
+    sample_text = (
+        "Admission Date:  [**2109-7-21**]       Discharge Date: [**2109-8-13**]\n"
+        "Date of Birth:   [**2053-6-5**]       Sex:  F\n"
+        "Service:  [**Doctor Last Name 1181**] MEDICINE\n"
+        "HISTORY OF PRESENT ILLNESS:  This is a 56-year-old female with a history of right frontal craniotomy.\n"
+        "PAST MEDICAL HISTORY: Hypercholesterolemia. Medications: Lipitor, Tylenol with Codeine, Dilantin.\n"
+    )
+    (fake_notes_dir / "1001.txt").write_text(sample_text, encoding="utf-8")
+    neg_docs = load_local_clinical_negatives(str(fake_notes_dir), max_samples=10, max_chars=300)
+    assert len(neg_docs) > 0
+    for d in neg_docs:
+        assert d["source"] == "local_clinical_clean"
+        assert d["spans"] == []
+        assert "[**" not in d["text"]
+        assert "craniotomy" in d["text"] or "Lipitor" in d["text"]
+
+
+def test_contrastive_corpus_ingests_n2c2_and_local_notes(corpus, tmp_path):
+    from redactx.data.contrastive_corpus import load_contrastive_corpus
+
+    fake_notes_dir = tmp_path / "mimic_test"
+    fake_notes_dir.mkdir()
+    (fake_notes_dir / "1002.txt").write_text(
+        "Patient was admitted for chest pain evaluation and coronary angiography. "
+        "Laboratory values showed normal troponin levels. Discharged on aspirin 81 mg daily.",
+        encoding="utf-8"
+    )
+
+    mock_pii = [
+        {"source": "nemotron", "text": "Call Alice at 555-1234.", "spans": [(5, 10, "name"), (14, 22, "phone")]}
+    ]
+
+    train, val, stats = load_contrastive_corpus(
+        num_pii_docs=1,
+        natural_negative_ratio=0.0,
+        hard_negative_ratio=1.0,
+        clinical_pair_ratio=0.0,
+        n2c2_train_ratio=1.0,
+        local_notes_dir=str(fake_notes_dir),
+        _pii_docs=mock_pii,
+        _natural_docs=[],
+        _allow_download=False
+    )
+    assert stats["n2c2_train_pair_docs"] > 0
+    assert stats["hard_negative_docs"] > 0
+    all_recs = train + val
+    assert any(r["metadata"]["source"] == "n2c2_train" for r in all_recs)
+    assert any(r["metadata"]["source"] == "local_clinical_clean" for r in all_recs)
+

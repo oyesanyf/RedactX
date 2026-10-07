@@ -28,6 +28,7 @@ in the same split.
 import ast
 import os
 import random
+import re
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -207,45 +208,166 @@ def load_natural_negatives(n: int, token: Optional[str]) -> List[Dict[str, Any]]
     return docs
 
 
+def load_local_clinical_negatives(directory: Optional[str] = None, max_samples: int = 500, max_chars: int = 600,
+                                  seed: int = 2029) -> List[Dict[str, Any]]:
+    """
+    Loads real clinical notes from local storage (e.g. data/test/*.txt from MIMIC-III)
+    and removes de-identification surrogate brackets [**...**].
+    The result is 100% clean, authentic clinical EHR prose without any identifiers,
+    providing the highest quality hard negatives for clinical NLP.
+    """
+    import glob
+    import random
+    from redactx.production.chunking import chunk_text
+
+    candidates = []
+    if directory and os.path.isdir(directory):
+        candidates.append(directory)
+
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    candidates.extend([
+        os.path.join(repo_root, "data", "test"),
+        os.path.join(repo_root, "data"),
+        os.path.abspath("data/test"),
+        os.path.abspath("data"),
+    ])
+
+    files = []
+    for cand in candidates:
+        if cand and os.path.isdir(cand):
+            hits = sorted(glob.glob(os.path.join(cand, "*.txt")))
+            if hits:
+                files = hits
+                break
+
+    if not files:
+        return []
+
+    rng = random.Random(seed)
+    files = list(files)
+    rng.shuffle(files)
+
+    docs: List[Dict[str, Any]] = []
+    for f in files:
+        try:
+            with open(f, "r", encoding="utf-8", errors="ignore") as fh:
+                raw = fh.read()
+            cleaned = re.sub(r"\[\*\*.*?\*\*\]", "...", raw)
+            for w in chunk_text(cleaned, max_chars=max_chars, overlap=0):
+                text_slice = w.slice(cleaned).strip()
+                if len(text_slice) >= 80:
+                    docs.append({
+                        "source": "local_clinical_clean",
+                        "text": text_slice,
+                        "spans": []
+                    })
+                    if len(docs) >= max_samples:
+                        break
+            if len(docs) >= max_samples:
+                break
+        except Exception as e:
+            logger.warning(f"Error reading local clinical file {f}: {e}")
+            continue
+
+    return docs
+
+
+def load_n2c2_training_pairs(root: Optional[str] = None, max_samples: int = 500, max_chars: int = 600,
+                             seed: int = 4242) -> List[Dict[str, Any]]:
+    """
+    Loads authentic clinical notes with gold PHI spans from n2c2 2014 TRAIN split.
+    Notes are cut into production-sized windows. Windows containing gold PHI
+    are returned with their generic-replaced contrastive twins.
+    """
+    import random
+    from redactx.data.n2c2 import load_n2c2, windows_with_spans, resolve_n2c2_dir
+
+    try:
+        n2c2_path = resolve_n2c2_dir(root)
+        if not n2c2_path or not os.path.isdir(n2c2_path):
+            return []
+        docs, _ = load_n2c2(n2c2_path, split="train")
+    except Exception as e:
+        logger.warning(f"Could not load n2c2 training data: {e}")
+        return []
+
+    windows: List[Dict[str, Any]] = []
+    for doc in docs:
+        for w in windows_with_spans(doc, max_chars=max_chars):
+            text = w["text"].strip()
+            if not text:
+                continue
+            if w["spans"]:
+                spans: List[Tuple[int, int, str]] = []
+                for s, e, lab in sorted(w["spans"]):
+                    if spans and s < spans[-1][1]:
+                        ps, pe, pl = spans[-1]
+                        spans[-1] = (ps, max(pe, e), pl)
+                    else:
+                        spans.append((s, e, lab))
+                windows.append({
+                    "source": "n2c2_train",
+                    "text": w["text"],
+                    "spans": spans,
+                    "twin": replace_spans_with_generic(w["text"], spans)
+                })
+
+    rng = random.Random(seed)
+    rng.shuffle(windows)
+    return windows[:max_samples]
+
+
 def load_hard_negatives(n: int, token: Optional[str], seed: int = 2028, max_chars: int = 600,
-                        allow_download: bool = True) -> List[Dict[str, Any]]:
+                        allow_download: bool = True, local_notes_dir: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Clinical-style CLEAN text, the hard negatives that teach specificity on medical prose:
-      ~40% PubMedQA pqa_unlabeled abstracts (evaluation uses pqa_labeled; natural negatives use pqa_artificial)
-      ~20% medalpaca/medical_meadow_wikidoc clinical reference text
-      rest synthetic identifier-free clinical notes (redactx.data.clean_notes), which also fill any shortfall
-           when the Hub is unreachable
+      ~40% local clinical notes (from data/test/*.txt or local_notes_dir) if available
+      ~30% PubMedQA pqa_unlabeled abstracts
+      ~15% medalpaca/medical_meadow_wikidoc clinical reference text
+      rest synthetic identifier-free clinical notes (redactx.data.clean_notes)
     """
     from redactx.data.clean_notes import generate_clean_notes
     docs: List[Dict[str, Any]] = []
     if n <= 0:
         return docs
-    plan = [("pubmed_unlabeled", int(n * 0.4)), ("wikidoc", int(n * 0.2))] if allow_download else []
-    for kind, k in plan:
-        got = 0
-        try:
-            if kind == "pubmed_unlabeled":
-                for row in _stream("qiaojin/PubMedQA", token, config="pqa_unlabeled"):
-                    ctx = row.get("context") or {}
-                    t = " ".join(ctx.get("contexts", [])) if isinstance(ctx, dict) else str(ctx)
-                    if t.strip():
-                        docs.append({"source": "pubmedqa_unlabeled", "text": t.strip()[:max_chars], "spans": []})
-                        got += 1
-                    if got >= k:
-                        break
-            else:
-                for row in _stream("medalpaca/medical_meadow_wikidoc", token):
-                    t = str(row.get("output") or "").strip()
-                    if len(t) >= 80:
-                        docs.append({"source": "wikidoc", "text": t[:max_chars], "spans": []})
-                        got += 1
-                    if got >= k:
-                        break
-        except Exception as e:
-            logger.warning(f"hard negatives '{kind}' unavailable: {e}")
-    for t in generate_clean_notes(n - len(docs), seed=seed, max_chars=max_chars):
-        docs.append({"source": "synthetic_clean_note", "text": t, "spans": []})
-    return docs
+
+    # 1. Prioritize real local clinical notes (MIMIC-III / data/test)
+    local_clean = load_local_clinical_negatives(local_notes_dir, max_samples=int(n * 0.5),
+                                                max_chars=max_chars, seed=seed)
+    docs.extend(local_clean)
+
+    # 2. Remote PubMedQA and WikiDoc if allow_download and room left
+    remaining = n - len(docs)
+    if remaining > 0 and allow_download:
+        plan = [("pubmed_unlabeled", int(remaining * 0.6)), ("wikidoc", int(remaining * 0.3))]
+        for kind, k in plan:
+            got = 0
+            try:
+                if kind == "pubmed_unlabeled":
+                    for row in _stream("qiaojin/PubMedQA", token, config="pqa_unlabeled"):
+                        ctx = row.get("context") or {}
+                        t = " ".join(ctx.get("contexts", [])) if isinstance(ctx, dict) else str(ctx)
+                        if t.strip():
+                            docs.append({"source": "pubmedqa_unlabeled", "text": t.strip()[:max_chars], "spans": []})
+                            got += 1
+                        if got >= k:
+                            break
+                else:
+                    for row in _stream("medalpaca/medical_meadow_wikidoc", token):
+                        t = str(row.get("output") or "").strip()
+                        if len(t) >= 80:
+                            docs.append({"source": "wikidoc", "text": t[:max_chars], "spans": []})
+                            got += 1
+                        if got >= k:
+                            break
+            except Exception as e:
+                logger.warning(f"hard negatives '{kind}' unavailable: {e}")
+
+    # 3. Fill any remainder with synthetic clinical notes
+    if len(docs) < n:
+        for t in generate_clean_notes(n - len(docs), seed=seed, max_chars=max_chars):
+            docs.append({"source": "synthetic_clean_note", "text": t, "spans": []})
+    return docs[:n]
 
 
 def load_clinical_pairs(n: int, seed: int = 2027, max_chars: int = 600) -> List[Dict[str, Any]]:
@@ -316,6 +438,8 @@ def load_contrastive_corpus(
     span_category_weights: Optional[Dict[str, float]] = None,
     oversample_categories: Tuple[str, ...] = (),
     oversample_factor: int = 1,
+    local_notes_dir: Optional[str] = None,
+    n2c2_train_ratio: float = 0.0,
     _pii_docs: Optional[List[Dict[str, Any]]] = None,
     _natural_docs: Optional[List[Dict[str, Any]]] = None,
     _allow_download: bool = True,
@@ -324,8 +448,9 @@ def load_contrastive_corpus(
     Returns (train_records, val_records, stats).
     For num_pii_docs PII documents the corpus contains:
       num_pii_docs positives + num_pii_docs contrastive negatives + num_pii_docs*natural_negative_ratio natural negatives
-      + num_pii_docs*hard_negative_ratio clinical hard negatives (PubMed unlabeled, WikiDoc, synthetic clean notes)
-      + num_pii_docs*clinical_pair_ratio synthetic clinical notes with PHI, each with its natural clean twin.
+      + num_pii_docs*hard_negative_ratio clinical hard negatives (local clinical discharge summaries, PubMed, WikiDoc)
+      + num_pii_docs*clinical_pair_ratio synthetic clinical notes with PHI, each with its natural clean twin
+      + num_pii_docs*n2c2_train_ratio real n2c2 clinical PHI windows, each with its generic-replaced twin.
 
     span_category_weights: {"AGE": 3.0, ...} multiplies the span-head loss on tokens of spans of that category.
     oversample_categories / oversample_factor: training positives that contain one of these categories (and their
@@ -350,11 +475,14 @@ def load_contrastive_corpus(
                            "Check network access and HF_TOKEN.")
     clinical = load_clinical_pairs(int(round(len(real_pii) * clinical_pair_ratio)), seed=seed + 2027,
                                    max_chars=max_chars) if clinical_pair_ratio > 0 else []
-    pii_docs = real_pii + clinical
+    n2c2_pairs = load_n2c2_training_pairs(max_samples=int(round(len(real_pii) * n2c2_train_ratio)),
+                                          max_chars=max_chars, seed=seed) if n2c2_train_ratio > 0 else []
+    pii_docs = real_pii + clinical + n2c2_pairs
     natural = (_natural_docs if _natural_docs is not None
                else load_natural_negatives(int(len(real_pii) * natural_negative_ratio), token))
     hard = load_hard_negatives(int(round(len(real_pii) * hard_negative_ratio)), token, seed=seed + 2028,
-                               max_chars=max_chars, allow_download=_allow_download) if hard_negative_ratio > 0 else []
+                               max_chars=max_chars, allow_download=_allow_download,
+                               local_notes_dir=local_notes_dir) if hard_negative_ratio > 0 else []
 
     rng.shuffle(pii_docs)
     rng.shuffle(natural)
@@ -420,14 +548,17 @@ def load_contrastive_corpus(
     stats = {
         "recipe": "contrastive (real PII docs + generic-replaced twins + natural clean text"
                   + (" + clinical hard negatives" if hard else "")
-                  + (" + synthetic clinical PHI/clean pairs" if clinical else "") + ")",
+                  + (" + synthetic clinical PHI/clean pairs" if clinical else "")
+                  + (" + n2c2 clinical PHI/clean pairs" if n2c2_pairs else "") + ")",
         "pii_docs_nemotron": len(nemo),
         "pii_docs_gretel": len(gretel),
         "clinical_pair_docs": len(clinical),
+        "n2c2_train_pair_docs": len(n2c2_pairs),
         "natural_negative_docs": len(natural),
         "natural_negative_sources": sources(natural),
         "hard_negative_docs": len(hard),
         "hard_negative_sources": sources(hard),
+        "local_notes_dir": local_notes_dir,
         "span_category_weights": weights,
         "oversample": {"categories": sorted(over), "factor": oversample_factor,
                        "train_records_added": count(train, "kind", "positive_oversampled") * 2},
@@ -439,6 +570,6 @@ def load_contrastive_corpus(
         "val_positives": count(val, "is_phi", True),
         "val_negatives": count(val, "is_phi", False),
         "held_out_for_evaluation": "ai4privacy/pii-masking-openpii-1m, PubMedQA pqa_labeled, generator seed 1337, "
-                                   "n2c2 2014 (none used in training)",
+                                   "n2c2 2014 test split (only test split held out for benchmark)",
     }
     return train, val, stats

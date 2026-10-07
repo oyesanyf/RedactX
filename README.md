@@ -15,10 +15,12 @@
 </div>
 
 > [!WARNING]
-> **RedactX is experimental and not production-ready.** The first checkpoint (v1) was evaluated on held-out data
-> and performed poorly (see [Benchmarks](#-benchmarks)). The training pipeline has been rebuilt (v2, contrastive
-> recipe + trained span head). **v2 benchmark results will be published here once the training run completes.**
-> Do not rely on RedactX as your only safeguard for regulated data.
+> **The production service code is in place; a production-ready *model* is not yet proven.** The first checkpoint
+> (v1) performed poorly on held-out data (see [Benchmarks](#-benchmarks)). The training pipeline has been rebuilt
+> (v2, contrastive recipe + trained span head) and **v2 benchmark results will be published here once the training
+> run completes.** Until then deploy in `hybrid` (RedactX ∪ Presidio) or `presidio` mode, and complete the
+> [readiness checklist](docs/PRODUCTION.md#readiness-checklist) — including evaluation on real clinical notes —
+> before processing real PHI.
 
 ---
 
@@ -30,6 +32,7 @@
 - [Quickstart](#-quickstart)
 - [Using RedactX in Python](#-using-redactx-in-python)
 - [REST API](#-rest-api)
+- [Production deployment](#-production-deployment)
 - [Benchmarks](#-benchmarks)
 - [Project layout](#-project-layout)
 - [Limitations & honest notes](#-limitations--honest-notes)
@@ -227,36 +230,72 @@ print(response.answers["has_phi"], response.spans, response.latency_ms)
 
 ## 🌐 REST API
 
+`redactx serve` runs the hardened production server: API-key auth, rate and size limits, fail-closed errors,
+PHI-free audit log, Prometheus metrics, long-document chunking, and three modes (`hybrid` = RedactX ∪ Presidio,
+`redactx`, `presidio`). Full guide: **[docs/PRODUCTION.md](docs/PRODUCTION.md)**.
+
 ```powershell
-redactx serve --port 8080
+redactx hash-key                                    # prints a new API key and its SHA-256 hash
+$env:REDACTX_API_KEY_HASHES = "<hash>"              # current PowerShell session only (or put it in .env)
+redactx serve --model-dir ./models/RedactX-v2 --mode hybrid --port 8080
 ```
 
-`POST /v1/decision` — request:
-
-```json
-{
-  "state": "Patient Marcus Kowalski admitted on 04/12/2026 with acute chest pain.",
-  "questions": [
-    { "key": "has_phi", "type": "noul", "question": "Contains HIPAA PHI or PII identifiers." }
-  ],
-  "samples": 1,
-  "entropy_threshold": 0.10
-}
+```powershell
+$h = @{ "X-API-Key" = "<key>" }
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8080/v2/redact -Headers $h -ContentType "application/json" `
+  -Body '{"text": "Pt. Raj Malhotra, DOB 3/14/1962, call 312-555-0198."}'
 ```
 
-Response shape (field types, not measured values):
+| Endpoint | Purpose |
+|---|---|
+| `POST /v2/redact` | `{"text", "strategy"?}` → redacted text, action (`PASS` / `REDACTED` / `REDACTED_DOCUMENT` / `REVIEW`), findings (offsets, HIPAA category, score, sources; no PHI values by default) |
+| `POST /v2/redact/batch` | `{"texts": [...]}` → one result per document |
+| `POST /v2/detect` | Findings and verdict without redacted text |
+| `GET /v2/info` | Mode, model fingerprint, calibrated thresholds, limits |
+| `GET /healthz`, `/readyz`, `/metrics` | Liveness, readiness, Prometheus |
 
-```text
-{
-  "model":      string,
-  "latency_ms": float,
-  "answers": {
-    "has_phi": { "type": "noul", "probability": float, "confidence": float,
-                 "value": bool, "re_reads_executed": int }
-  },
-  "spans": [ { "text": string, "start": int, "end": int, "category": string, "confidence": float } ]
-}
+Redaction strategies: `tag` (`[NAME]`), `mask` (`[REDACTED]`), `char` (`*****`, length-preserving), `pseudonym`
+(`[NAME_3f2a9c1b]`, keyed HMAC so the same value maps to the same token).
+
+The earlier research gateway (`POST /v1/decision`, multi-question decisions, no auth) is kept as
+`redactx serve-legacy` for development only.
+
+---
+
+## 🏭 Production deployment
+
+Everything below is documented in detail in **[docs/PRODUCTION.md](docs/PRODUCTION.md)** (architecture,
+configuration table, security model, monitoring, runbook, readiness checklist).
+
+```powershell
+python -m pip install -e ".[production]"; python -m spacy download en_core_web_lg
+
+# 1. pick thresholds for a target recall on held-out data (writes <model-dir>/redactx_thresholds.json)
+python calibrate_thresholds.py --model-dir ./models/RedactX-v2 --target-recall 0.98
+
+# 2. benchmark: doc + span metrics, RedactX vs Presidio vs hybrid, long documents, per-HIPAA-category recall
+python validate_model.py --model-dir ./models/RedactX-v2
+
+# 3. serve (see .env.example for every setting)
+redactx serve --model-dir ./models/RedactX-v2 --mode hybrid
+
+# batch-redact files / folders / stdin; the JSONL report has counts and offsets, never PHI values
+redactx redact notes/ --out-dir redacted/ --report report.jsonl --model-dir ./models/RedactX-v2
+
+# measure throughput and p50/p95/p99 against a running server
+python loadtest.py --url http://127.0.0.1:8080 --api-key <key> --concurrency 8 --requests 400
 ```
+
+| Production concern | Implementation |
+|---|---|
+| Long documents | Overlapping 600/150-char windows, batched, spans stitched back to document offsets |
+| Recall over a single model | `hybrid` mode: union of RedactX and Presidio findings |
+| Thresholds | Calibrated for a target recall, stored with the checkpoint, reported by `/v2/info` |
+| HIPAA | Findings mapped to the 18 Safe Harbor categories; `REDACTX_HIPAA_ONLY`; per-category recall in the benchmark |
+| Fail-closed | Detector errors → 503, never raw text; detected-but-unlocalized PHI → whole-document redaction or human review |
+| API hardening | Hashed API keys, per-key rate limits, body/document/batch limits, backpressure, timeouts, request IDs |
+| Privacy of logs | Audit log and metrics carry counts and categories only |
+| Packaging | `Dockerfile` (CPU default, CUDA build arg, non-root, offline, health check), `.env.example` |
 
 ---
 
@@ -291,6 +330,22 @@ span with IoU ≥ 0.5 or a matching category).
 | Q — specificity | *pending* | n/a |
 | Latency (median / p95, `evaluate_text`) | *pending* | |
 
+**Deployment modes** (character-level, whitespace ignored; L = long documents of 5 joined ai4privacy docs, RedactX
+run through the production chunker):
+
+| Set — char precision / recall / F1 | RedactX v2 | Presidio | Hybrid (union) |
+|---|---|---|---|
+| G | *pending* | *pending* | *pending* |
+| P | *pending* | *pending* | *pending* |
+| L | *pending* | *pending* | *pending* |
+
+**Per-HIPAA-category recall** on P (char-level) for RedactX / Presidio / Hybrid: *pending* — printed by
+`validate_model.py` and stored under `P_ai4privacy_val_per_category_recall` in `validation_results.json`.
+
+> [!IMPORTANT]
+> None of these sets are clinical notes. Before production use, measure per-category recall on a clinical
+> de-identification corpus (e.g. n2c2 2014) and on your own annotated documents.
+
 ### RedactX v1 (60/20/20 recipe) — measured, superseded
 
 Kept for transparency. These are the numbers that motivated the v2 rebuild.
@@ -314,10 +369,24 @@ Kept for transparency. These are the numbers that motivated the v2 rebuild.
 ```text
 RedactX/
 ├── train.py                      # training entry point (+ automatic held-out benchmark)
-├── validate_model.py             # held-out benchmark: H / G / P / Q sets vs. real Presidio
-├── predict.py                    # quick CLI inference
+├── validate_model.py             # held-out benchmark: H/G/P/Q/L sets, RedactX vs Presidio vs hybrid, per category
+├── calibrate_thresholds.py       # doc/span thresholds for a target recall -> redactx_thresholds.json
 ├── calibrate_temperature.py      # temperature scaling on held-out data
+├── loadtest.py                   # concurrent load test against a running server
+├── predict.py                    # quick CLI inference
+├── Dockerfile, .env.example      # production packaging / configuration template
+├── docs/PRODUCTION.md            # production guide
 ├── redactx/
+│   ├── cli.py                    # redactx serve | redact | hash-key | serve-legacy | scan | generate
+│   ├── production/
+│   │   ├── chunking.py           # overlapping windows for long documents
+│   │   ├── detectors.py          # RedactXDetector, PresidioDetector, HybridDetector
+│   │   ├── hipaa.py              # HIPAA Safe Harbor categories + label mapping
+│   │   ├── redactor.py           # strategies + fail-closed policy
+│   │   ├── thresholds.py         # ThresholdConfig, threshold_for_recall
+│   │   ├── settings.py           # REDACTX_* settings, validated at start-up
+│   │   ├── metrics.py            # Prometheus metrics
+│   │   └── server.py             # hardened FastAPI app
 │   ├── data/
 │   │   ├── prompting.py          # shared prompt builder + raw-offset map + span labels
 │   │   ├── contrastive_corpus.py # v2 contrastive recipe
@@ -325,17 +394,18 @@ RedactX/
 │   │   ├── benchmark_loaders.py  # legacy recipes
 │   │   └── generator.py          # synthetic clinical notes (used for benchmark set G)
 │   ├── models/
-│   │   ├── openjev.py            # inference engine (OpenJev / OpenJevVaultGemmaEngine)
+│   │   ├── openjev.py            # inference engine (OpenJev / OpenJevVaultGemmaEngine), batched score_texts
 │   │   └── span_locator.py       # TokenSpanLocator span head
 │   ├── training/openjev_trainer.py
 │   ├── evaluation/benchmark_suite.py
 │   └── primitives.py             # request / response schemas
-└── tests/                        # pytest suite (real tokenizers, no mocked outputs)
+└── tests/                        # pytest suite (real models, real Presidio, real HTTP; no mocked outputs)
 ```
 
 Run the tests:
 
 ```powershell
+python -m pip install -e ".[production,dev]"
 python -m pytest tests -q
 ```
 
@@ -346,8 +416,10 @@ python -m pytest tests -q
 - **Differential privacy:** VaultGemma was *pre-trained* with differential privacy. RedactX fine-tuning uses standard
   (non-DP) optimization, so the DP guarantee does **not** extend to the fine-tuned weights.
 - **English only** in training and evaluation.
-- **Max length:** text is capped at `--max-chars` (600 by default) per decision; long documents must be chunked.
-- **Span categories are heuristic** (see note above).
+- **Length:** the model sees at most `--max-chars` (600 by default) per forward pass. The production detector and
+  server chunk longer documents into overlapping windows; `engine.evaluate_text` alone does not.
+- **Span categories are heuristic** (see note above); Presidio supplies typed categories in hybrid mode.
+- **No clinical evaluation yet:** the held-out sets are general PII and synthetic notes, not real clinical notes.
 - **Training-time validation metrics are in-distribution.** Trust `validate_model.py` (held-out) over `scores.json`.
 - **Dataset licenses:** check each dataset's license on Hugging Face before using trained weights commercially.
 - **Model weights are not stored in this repository** (GitHub size limits); `/models/` is git-ignored.
@@ -359,7 +431,10 @@ python -m pytest tests -q
 - [x] Contrastive training recipe with real PII documents and clean twins
 - [x] Jointly trained token span head with exact raw-offset mapping
 - [x] Held-out benchmark against real Presidio, run automatically after training
+- [x] Long-document chunking with span stitching
+- [x] Hybrid RedactX ∪ Presidio mode, recall-targeted thresholds, per-HIPAA-category recall
+- [x] Hardened API server, batch CLI, Docker image, load tester
 - [ ] **Publish v2 benchmark results** (after full training run)
-- [ ] Long-document chunking with span stitching
+- [ ] Evaluate on a clinical de-identification corpus (n2c2 2014)
 - [ ] Learned entity-type classification for spans
 - [ ] Publish weights to Hugging Face with a model card containing only measured results

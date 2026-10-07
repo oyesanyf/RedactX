@@ -99,7 +99,7 @@ class OpenJevVaultGemmaEngine(nn.Module):
             raw_model = AutoModelForCausalLM.from_pretrained(
                 target_model_id,
                 token=token,
-                dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
+                dtype=torch.bfloat16 if self.device.type == "cuda" else torch.float32,
                 low_cpu_mem_usage=True
             )
             hidden_dim = getattr(raw_model.config, "hidden_size", getattr(raw_model.config, "n_embd", 2048))
@@ -149,7 +149,7 @@ class OpenJevVaultGemmaEngine(nn.Module):
 
         # Token-Level Span Attribution Head for PHI localization (only if a TRAINED head was saved).
         # Kept in fp32, exactly as in training (head applied to hidden_states[-1].float()).
-        self.span_threshold = 0.50
+        # span_threshold / doc_threshold are set below from redactx_thresholds.json (defaults 0.5)
         span_file = os.path.join(target_model_id, "redactx_span_locator.pt") if is_local_dir else None
         if self.config.enable_span_locator and span_file and os.path.exists(span_file):
             self.span_locator = TokenSpanLocator(hidden_dim=hidden_dim).to(self.device)
@@ -169,8 +169,15 @@ class OpenJevVaultGemmaEngine(nn.Module):
                 except Exception:
                     self.temperature = 1.0
 
+        # Operating thresholds chosen for a target recall on held-out data (calibrate_thresholds.py)
+        from redactx.production.thresholds import ThresholdConfig
+        self.thresholds = ThresholdConfig.load(target_model_id) if is_local_dir else ThresholdConfig()
+        self.doc_threshold = float(self.thresholds.doc_threshold)
+        self.span_threshold = float(self.thresholds.span_threshold)
+
         self.scores: Dict[str, Any] = {}
         self.to(self.device)
+        self.model.eval()
 
     def extract_terminal_logits(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
@@ -190,6 +197,32 @@ class OpenJevVaultGemmaEngine(nn.Module):
             batch_idx = torch.arange(input_ids.size(0), device=input_ids.device)
             pooled = hidden_states[batch_idx, seq_lens]
             return self.readout_head(pooled)
+
+    def candidate_logits_fp32(self, outputs, rows: torch.Tensor, last: torch.Tensor,
+                              token_ids: List[int]) -> torch.Tensor:
+        """
+        Logits of `token_ids` at positions (rows, last), computed in float32 from the final hidden state and
+        the LM-head rows. Under bf16 the full-vocabulary logits are rounded to bf16 (step 0.5 at |logit|~100),
+        which visibly moves P(true); this keeps the decision precise. Falls back to outputs.logits when the
+        model exposes no output embedding / hidden states. [len(rows), len(token_ids)]
+        """
+        head = self.model.get_output_embeddings() if hasattr(self.model, "get_output_embeddings") else None
+        hs = getattr(outputs, "hidden_states", None)
+        if head is not None and hs is not None and getattr(head, "weight", None) is not None:
+            h = hs[-1][rows, last].float()
+            idx = torch.tensor(token_ids, device=head.weight.device)
+            w = head.weight.index_select(0, idx).float()
+            logits = h @ w.T
+            bias = getattr(head, "bias", None)
+            if bias is not None:
+                logits = logits + bias.index_select(0, idx).float()
+            cap = getattr(getattr(self.model, "config", None), "final_logit_softcapping", None)
+            if cap:
+                logits = torch.tanh(logits / cap) * cap
+            return logits
+        if getattr(outputs, "logits", None) is not None:
+            return outputs.logits[rows, last][:, token_ids].float()
+        return self.readout_head(outputs.last_hidden_state[rows, last])[:, token_ids].float()
 
     @staticmethod
     def calculate_entropy(probs: torch.Tensor) -> float:
@@ -270,15 +303,15 @@ class OpenJevVaultGemmaEngine(nn.Module):
                 outputs = self.model(
                     input_ids=encoding.input_ids,
                     attention_mask=encoding.attention_mask,
-                    output_hidden_states=want_spans
+                    output_hidden_states=True
                 )
-                if getattr(outputs, "logits", None) is not None:
-                    logits = outputs.logits[0, -1, :]
-                else:
-                    logits = self.readout_head(outputs.last_hidden_state[0, -1, :])
                 target_ids = [self.false_token_id, self.true_token_id]
-                candidate_logits = torch.stack([logits[self.false_token_id], logits[self.true_token_id]]) / max(self.temperature, 1e-3)
-                probs = F.softmax(candidate_logits.float(), dim=-1)
+                zero = torch.zeros(1, dtype=torch.long, device=encoding.input_ids.device)
+                last_pos = torch.full((1,), encoding.input_ids.size(1) - 1, dtype=torch.long,
+                                      device=encoding.input_ids.device)
+                candidate_logits = self.candidate_logits_fp32(outputs, zero, last_pos, target_ids)[0]
+                candidate_logits = candidate_logits / max(self.temperature, 1e-3)
+                probs = F.softmax(candidate_logits, dim=-1)
 
                 entropy = self.calculate_entropy(probs)
                 re_reads = 0
@@ -298,7 +331,7 @@ class OpenJevVaultGemmaEngine(nn.Module):
                     type="noul",
                     probability=round(p_true, 4),
                     confidence=round(confidence, 4),
-                    value=(p_true >= 0.50),
+                    value=(p_true >= self.doc_threshold),
                     re_reads_executed=re_reads
                 )
 
@@ -408,12 +441,15 @@ class OpenJevVaultGemmaEngine(nn.Module):
         self,
         text: str,
         question: str = "Contains HIPAA PHI or PII identifiers.",
-        decision_threshold: float = 0.40
+        decision_threshold: Optional[float] = None
     ) -> NoulDecision:
         """
         High-level helper to evaluate a single clinical or general text string for PHI.
         Returns a NoulDecision containing calibrated probabilities, verdict, confidence, and spans.
+        `decision_threshold` defaults to the engine's calibrated doc threshold (redactx_thresholds.json, else 0.5).
         """
+        if decision_threshold is None:
+            decision_threshold = self.doc_threshold
         t_start = time.perf_counter()
         req = DecisionRequest(
             state=text,
@@ -450,6 +486,72 @@ class OpenJevVaultGemmaEngine(nn.Module):
             metadata={"confidence": conf}
         )
 
+    @torch.inference_mode()
+    def score_texts(
+        self,
+        texts: List[str],
+        question: str = "Contains HIPAA PHI or PII identifiers.",
+        batch_size: int = 8,
+        span_threshold: Optional[float] = None,
+        return_token_probs: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """
+        Batched Noul scoring. For each text returns:
+          p_phi       calibrated P(PHI) (temperature applied)
+          entropy     normalized Shannon entropy of the false/true distribution
+          spans       List[DetectedSpan] in raw-text offsets (empty when the checkpoint has no span head)
+          token_probs / raw_ranges  (only if return_token_probs) per-token span-head probabilities and
+                      the raw-text range of each token ((-1, -1) for template tokens)
+        Texts are right-padded; the verdict logit is read at each row's last real token, so results match
+        unbatched evaluation up to floating-point noise.
+        """
+        thr = self.span_threshold if span_threshold is None else span_threshold
+        want_spans = self.span_locator is not None
+        results: List[Dict[str, Any]] = []
+        prev_side = getattr(self.tokenizer, "padding_side", "right")
+        self.tokenizer.padding_side = "right"
+        try:
+            for b in range(0, len(texts), max(1, batch_size)):
+                chunk = texts[b:b + batch_size]
+                built = [build_noul_prompt(t, question) for t in chunk]
+                enc = self.tokenizer(
+                    [p for p, _ in built],
+                    return_tensors="pt",
+                    padding=True,
+                    return_offsets_mapping=want_spans,
+                )
+                offsets = enc.pop("offset_mapping").tolist() if want_spans else None
+                enc = enc.to(self.device)
+                outputs = self.model(
+                    input_ids=enc.input_ids,
+                    attention_mask=enc.attention_mask,
+                    output_hidden_states=True,
+                )
+                last = enc.attention_mask.sum(dim=1) - 1
+                rows = torch.arange(enc.input_ids.size(0), device=enc.input_ids.device)
+                pair = self.candidate_logits_fp32(outputs, rows, last, [self.false_token_id, self.true_token_id])
+                probs = F.softmax(pair / max(self.temperature, 1e-3), dim=-1)
+                span_probs = (torch.sigmoid(self.span_locator(outputs.hidden_states[-1].float()))
+                              if want_spans else None)
+                for i, (text, (_, raw_index)) in enumerate(zip(chunk, built)):
+                    rec: Dict[str, Any] = {
+                        "p_phi": float(probs[i, 1].item()),
+                        "entropy": self.calculate_entropy(probs[i]),
+                        "spans": [],
+                    }
+                    if want_spans:
+                        n_real = int(enc.attention_mask[i].sum().item())
+                        row_offsets = [tuple(o) for o in offsets[i][:n_real]]
+                        raw_ranges = token_raw_ranges(row_offsets, raw_index)
+                        tp = span_probs[i, :n_real]
+                        rec["spans"] = self.span_locator.extract_raw_spans(tp, raw_ranges, text, threshold=thr)
+                        if return_token_probs:
+                            rec["token_probs"] = tp.tolist()
+                            rec["raw_ranges"] = raw_ranges
+                    results.append(rec)
+        finally:
+            self.tokenizer.padding_side = prev_side
+        return results
     def save_pretrained(self, output_dir: str = "./models/redactx"):
         """Saves LoRA adapters, span locator, metadata, and scores into the models directory."""
         import json

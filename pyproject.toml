@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "redactx"
-version = "0.1.0"
-description = "RedactX: Differentially Private, Sub-50ms Jev-Like Decision Engine for PHI/PII Detection"
+version = "0.2.0"
+description = "RedactX: PHI/PII detection and redaction with a fine-tuned VaultGemma model and Presidio"
 readme = "README.md"
 authors = [{ name = "RedactX Team" }]
 license = { text = "Apache-2.0" }
@@ -22,6 +22,25 @@ dependencies = [
     "tqdm>=4.66.0"
 ]
 
+[project.optional-dependencies]
+# Production server: Presidio for hybrid mode (also needs `python -m spacy download en_core_web_lg`).
+production = [
+    "presidio-analyzer>=2.2",
+    "spacy>=3.7",
+    "httpx>=0.25",
+]
+# Training, calibration and held-out validation.
+train = [
+    "datasets>=2.18",
+    "accelerate>=0.27",
+    "presidio-analyzer>=2.2",
+    "spacy>=3.7",
+]
+dev = [
+    "pytest>=7.4",
+    "httpx>=0.25",
+]
+
 [project.scripts]
 redactx = "redactx.cli:main"
 
@@ -30,4 +49,5 @@ include = ["redactx*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py"]

@@ -7,7 +7,7 @@ __pycache__/
 *.egg-info/
 
 # Model weights & checkpoints (2 GB+, exceeds GitHub's 100 MB limit; publish to Hugging Face instead)
-models/
+/models/
 *.safetensors
 *.pt
 *.bin

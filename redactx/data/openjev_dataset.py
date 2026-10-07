@@ -210,10 +210,43 @@ class OpenJevCalibratedDataset(Dataset):
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         item = self.records[idx]
-        prompt = item["prompt"]
-        alt_prompt = item.get("alt_prompt", prompt)
         candidate_tokens = item["candidate_tokens"]
         target_dist = item["target_dist"]
+        candidate_ids = [resolve_anchor_token(self.tokenizer, tok) for tok in candidate_tokens]
+
+        # Contrastive records carry raw text + PII char spans -> build prompt with offsets and span labels.
+        if "text" in item and "pii_spans" in item:
+            from redactx.data.prompting import build_noul_prompt, token_span_labels
+            text = item["text"]
+            spans = [tuple(s) for s in item["pii_spans"]]
+            while True:
+                prompt, raw_index = build_noul_prompt(text)
+                enc = self.tokenizer(prompt, return_offsets_mapping=True, return_tensors="pt")
+                if enc.input_ids.size(1) <= self.max_length or len(text) < 50:
+                    break
+                # Shorten the text (never truncate the prompt: the last token must stay "[VERDICT]:")
+                cut = int(len(text) * 0.8)
+                text = text[:cut]
+                spans = [(s, min(e, cut)) for s, e in spans if s < cut]
+            offsets = [tuple(o) for o in enc.offset_mapping[0].tolist()]
+            labels = token_span_labels(offsets, raw_index, spans)
+            input_ids = enc.input_ids.squeeze(0)
+            attention_mask = enc.attention_mask.squeeze(0)
+            return {
+                "id": item["id"],
+                "primitive": item["primitive"],
+                "input_ids": input_ids,
+                "attention_mask": attention_mask,
+                "alt_input_ids": input_ids,
+                "alt_attention_mask": attention_mask,
+                "is_reversed": False,
+                "candidate_token_ids": torch.tensor(candidate_ids, dtype=torch.long),
+                "target_dist": torch.tensor(target_dist, dtype=torch.float32),
+                "token_span_labels": torch.tensor(labels, dtype=torch.long),
+            }
+
+        prompt = item["prompt"]
+        alt_prompt = item.get("alt_prompt", prompt)
 
         encoding = self.tokenizer(
             prompt,
@@ -230,8 +263,6 @@ class OpenJevCalibratedDataset(Dataset):
             truncation=True,
             return_tensors="pt"
         )
-
-        candidate_ids = [resolve_anchor_token(self.tokenizer, tok) for tok in candidate_tokens]
 
         return {
             "id": item["id"],
@@ -282,7 +313,7 @@ def collate_openjev_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         candidate_mask[i, :num_cands] = True
         is_reversed[i] = bool(item.get("is_reversed", False))
 
-    return {
+    return_batch = {
         "input_ids": padded_input_ids,
         "attention_mask": padded_attention_mask,
         "alt_input_ids": padded_alt_input_ids,
@@ -292,3 +323,14 @@ def collate_openjev_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
         "candidate_mask": candidate_mask,
         "is_reversed": is_reversed
     }
+
+    # Per-token span labels (contrastive recipe). Missing/padded positions = -100 (ignored).
+    if any("token_span_labels" in item for item in batch):
+        span_labels = torch.full((batch_size, max_seq_len), -100, dtype=torch.long)
+        for i, item in enumerate(batch):
+            lab = item.get("token_span_labels")
+            if lab is not None:
+                span_labels[i, :lab.size(0)] = lab
+        return_batch["token_span_labels"] = span_labels
+
+    return return_batch

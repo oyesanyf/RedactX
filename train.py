@@ -8,7 +8,10 @@ Executes the four sequential engineering phases:
 5. Permutation Stability & ECE Validation, followed by merge_and_unload() Export.
 
 Usage:
-    # Train VaultGemma with OpenJev calibration & merge:
+    # Recommended: contrastive recipe (real PII vs. same-text-without-PII vs. natural clean text) + span head:
+    python train.py --model google/vaultgemma-1b --force-vaultgemma --recipe-contrastive --samples 2000 --epochs 3 --output-dir ./models/RedactX-v2
+
+    # Legacy recipe:
     python train.py --model google/vaultgemma-1b --force-vaultgemma --samples 500 --epochs 3 --output-dir ./models/openjev_vaultgemma
 """
 
@@ -26,6 +29,7 @@ from redactx.data.benchmark_loaders import (
     load_gretel_pii_benchmark, load_ai4privacy_openpii, load_nemotron_pii_benchmark,
     load_hybrid_training_corpus, load_recipe_60_20_20_corpus
 )
+from redactx.data.contrastive_corpus import load_contrastive_corpus
 from redactx.training.openjev_trainer import OpenJevFineTuningPipeline
 
 
@@ -107,6 +111,20 @@ def main():
                         help="Optional directory containing local N2C2 / MIMIC text notes")
     parser.add_argument("--recipe-60-20-20", action="store_true", default=False,
                         help="Use the recommended 60/20/20 hybrid recipe (60%% Persona, 20%% Clinical, 20%% Hard Negatives)")
+    parser.add_argument("--recipe-contrastive", action="store_true", default=False,
+                        help="Contrastive recipe: --samples real PII docs (Nemotron-PII/Gretel) + the same docs with PII "
+                             "replaced by generic phrases + natural clean text (PubMedQA/flashcards/code). "
+                             "Noul-only records with token-level span labels. Recommended.")
+    parser.add_argument("--natural-negative-ratio", type=float, default=0.5,
+                        help="Contrastive recipe: natural clean docs per PII doc (default: 0.5)")
+    parser.add_argument("--max-chars", type=int, default=600,
+                        help="Contrastive recipe: max characters of text per record (default: 600)")
+    parser.add_argument("--max-length", type=int, default=384,
+                        help="Max prompt tokens (default: 384)")
+    parser.add_argument("--lambda-span", type=float, default=None,
+                        help="Weight of the token span-head loss. Default: 1.0 with --recipe-contrastive, else 0 (off)")
+    parser.add_argument("--span-pos-weight", type=float, default=3.0,
+                        help="BCE positive-class weight for PII tokens in the span loss (default: 3.0)")
     parser.add_argument("--epochs", type=int, default=3,
                         help="Number of training epochs (default: 3)")
     parser.add_argument("--batch-size", type=int, default=4,
@@ -131,6 +149,12 @@ def main():
                         help="Target device ('cuda' or 'cpu'). Defaults to auto-detect.")
     parser.add_argument("--seed", type=int, default=42,
                         help="Random seed for reproducibility (default: 42)")
+    parser.add_argument("--no-benchmark", action="store_true", default=False,
+                        help="Skip the held-out benchmark (validate_model.py) that runs after training")
+    parser.add_argument("--benchmark-n-ai4privacy", type=int, default=200,
+                        help="ai4privacy validation docs for the post-training benchmark (default: 200)")
+    parser.add_argument("--benchmark-skip-presidio", action="store_true", default=False,
+                        help="Do not run real Presidio as the comparison baseline in the benchmark")
 
     args = parser.parse_args()
 
@@ -153,44 +177,64 @@ def main():
     # ==============================================================================
     # Step 1: Ingesting Hybrid Actual Benchmarks & Synthetic Dataset
     # ==============================================================================
-    if args.recipe_60_20_20:
+    if args.recipe_contrastive:
         print("\n=======================================================")
-        print(" Step 1: Ingesting Recommended 60/20/20 Hybrid Dataset Recipe")
-        print("   (60% Persona [Nemotron/Faker] / 20% Clinical [Gretel/OpenPII] / 20% Hard Negatives [PubMed/Logs])")
+        print(" Step 1: Building Contrastive Corpus")
+        print("   (real PII docs + generic-replaced twins + natural clean text; ai4privacy held out)")
         print("=======================================================")
-        corpus, stats = load_recipe_60_20_20_corpus(
-            total_samples=args.samples,
-            local_notes_dir=args.local_notes_dir,
+        train_records, val_records, stats = load_contrastive_corpus(
+            num_pii_docs=args.samples,
+            natural_negative_ratio=args.natural_negative_ratio,
+            max_chars=args.max_chars,
             seed=args.seed,
             hf_token=active_token
         )
-        print("\n[Corpus Composition - 60/20/20 Recipe]")
-        print(f"  - Persona Records (Nemotron-PII / Faker):     {stats['persona_records']}")
-        print(f"  - Clinical Records (Gretel / OpenPII / Notes): {stats['clinical_records']}")
-        print(f"  - Hard Negative Records (PubMed / Telemetry):  {stats['hard_negative_records']}")
-        print(f"  - Total Hybrid Decision Records:               {len(corpus)}")
+        print("\n[Corpus Composition - Contrastive Recipe]")
+        print(f"  - PII docs (Nemotron-PII / Gretel):           {stats['pii_docs_nemotron']} / {stats['pii_docs_gretel']}")
+        print(f"  - Natural clean docs:                         {stats['natural_negative_docs']} {stats['natural_negative_sources']}")
+        print(f"  - Train records (PHI / clean):                {stats['train_positives']} / {stats['train_negatives']}")
+        print(f"  - Val records (PHI / clean):                  {stats['val_positives']} / {stats['val_negatives']}")
     else:
-        print("\n=======================================================")
-        print(" Step 1: Ingesting Hybrid Actual Benchmarks & Synthetic Dataset")
-        print("=======================================================")
-        print(f"Loading {args.samples} synthetic samples + {args.benchmark_samples} actual benchmark samples...")
-        corpus, stats = load_hybrid_training_corpus(
-            synthetic_samples=args.samples,
-            real_benchmark_samples=args.benchmark_samples,
-            local_notes_dir=args.local_notes_dir,
-            seed=args.seed,
-            hf_token=active_token
-        )
-        print("\n[Corpus Composition]")
-        print(f"  - Actual Benchmark Records (Gretel / OpenPII): {stats['actual_benchmark_records']}")
-        print(f"  - Synthetic Healthcare Records (Faker):       {stats['synthetic_records']}")
-        print(f"  - Total Hybrid Decision Records:              {stats['total_records']}")
+        if args.recipe_60_20_20:
+            print("\n=======================================================")
+            print(" Step 1: Ingesting Recommended 60/20/20 Hybrid Dataset Recipe")
+            print("   (60% Persona [Nemotron/Faker] / 20% Clinical [Gretel/OpenPII] / 20% Hard Negatives [PubMed/Logs])")
+            print("=======================================================")
+            corpus, stats = load_recipe_60_20_20_corpus(
+                total_samples=args.samples,
+                local_notes_dir=args.local_notes_dir,
+                seed=args.seed,
+                hf_token=active_token
+            )
+            print("\n[Corpus Composition - 60/20/20 Recipe]")
+            print(f"  - Persona Records (Nemotron-PII / Faker):     {stats['persona_records']}")
+            print(f"  - Clinical Records (Gretel / OpenPII / Notes): {stats['clinical_records']}")
+            print(f"  - Hard Negative Records (PubMed / Telemetry):  {stats['hard_negative_records']}")
+            print(f"  - Total Hybrid Decision Records:               {len(corpus)}")
+        else:
+            print("\n=======================================================")
+            print(" Step 1: Ingesting Hybrid Actual Benchmarks & Synthetic Dataset")
+            print("=======================================================")
+            print(f"Loading {args.samples} synthetic samples + {args.benchmark_samples} actual benchmark samples...")
+            corpus, stats = load_hybrid_training_corpus(
+                synthetic_samples=args.samples,
+                real_benchmark_samples=args.benchmark_samples,
+                local_notes_dir=args.local_notes_dir,
+                seed=args.seed,
+                hf_token=active_token
+            )
+            print("\n[Corpus Composition]")
+            print(f"  - Actual Benchmark Records (Gretel / OpenPII): {stats['actual_benchmark_records']}")
+            print(f"  - Synthetic Healthcare Records (Faker):       {stats['synthetic_records']}")
+            print(f"  - Total Hybrid Decision Records:              {stats['total_records']}")
 
-    split_idx = int(len(corpus) * 0.8)
-    train_records = corpus[:split_idx]
-    val_records = corpus[split_idx:]
+        split_idx = int(len(corpus) * 0.8)
+        train_records = corpus[:split_idx]
+        val_records = corpus[split_idx:]
     print(f"  - Training Split:                             {len(train_records)} records")
     print(f"  - Validation Split:                           {len(val_records)} records")
+
+    lambda_span = args.lambda_span if args.lambda_span is not None else (1.0 if args.recipe_contrastive else 0.0)
 
     # ==============================================================================
     # Step 2: Initialize VaultGemma with Targeted Adapters
@@ -206,7 +250,10 @@ def main():
         lambda_brier=args.lambda_brier,
         lambda_consistency=args.lambda_consistency,
         use_fallback_if_gated=not args.force_vaultgemma,
-        hf_token=active_token
+        hf_token=active_token,
+        lambda_span=lambda_span,
+        span_pos_weight=args.span_pos_weight,
+        max_length=args.max_length
     )
 
     # ==============================================================================
@@ -226,20 +273,62 @@ def main():
         model_name=args.model_name
     )
 
-    # Export synthetic jsonl artifact into final model directory
-    synthetic_jsonl_path = os.path.join(args.output_dir, "redactx_synthetic_train.jsonl")
-    export_synthetic_train_jsonl(synthetic_jsonl_path, num_samples=min(args.samples, 1000))
-    print(f"  - Synthetic JSONL exported:                   {synthetic_jsonl_path}")
+    if not args.recipe_contrastive:
+        # Export synthetic jsonl artifact into final model directory (legacy recipes only)
+        synthetic_jsonl_path = os.path.join(args.output_dir, "redactx_synthetic_train.jsonl")
+        export_synthetic_train_jsonl(synthetic_jsonl_path, num_samples=min(args.samples, 1000))
+        print(f"  - Synthetic JSONL exported:                   {synthetic_jsonl_path}")
+
+    def fmt(v, spec=".4f"):
+        return "N/A" if v is None else format(v, spec)
 
     print("\n=======================================================")
     print(" Step 5: Final Validation & Merged Model Export Summary")
     print("=======================================================")
     print(f"Model Name:                   {scores.get('model_name', args.model_name)}")
     print(f"Base Backbone:                {scores.get('base_model', scores.get('model_id'))}")
-    print(f"Expected Calibration Error:  {scores['expected_calibration_error_ece']:.4f}")
-    print(f"Permutation Stability:        {scores['permutation_stability_rate']:.2f}%")
-    print(f"Mean Brier Score:             {scores['brier_score']:.4f}")
+    print(f"Expected Calibration Error:   {fmt(scores['expected_calibration_error_ece'])}")
+    print(f"Permutation Stability:        {fmt(scores['permutation_stability_rate'], '.2f')}")
+    print(f"Mean Brier Score:             {fmt(scores['brier_score'])}")
+    print(f"Val doc acc / recall / spec:  {fmt(scores.get('val_doc_accuracy'))} / "
+          f"{fmt(scores.get('val_doc_recall'))} / {fmt(scores.get('val_doc_specificity'))}")
+    print(f"Val span P / R / F1 (tokens): {fmt(scores.get('val_span_precision'))} / "
+          f"{fmt(scores.get('val_span_recall'))} / {fmt(scores.get('val_span_f1'))}")
+    print("NOTE: these are in-distribution validation numbers. Run validate_model.py for held-out evaluation.")
     print(f"\n[Success] Your fine-tuned model '{args.model_name}' is saved and ready in: {os.path.abspath(args.output_dir)}")
+
+    # ==============================================================================
+    # Step 6: Held-out benchmark (same evaluation as validate_model.py)
+    # ==============================================================================
+    if args.no_benchmark:
+        return
+    if not os.path.exists(os.path.join(args.output_dir, "config.json")):
+        print("\n[Benchmark] Skipped: output is an unmerged adapter (--no-merge). Run validate_model.py on a merged model.")
+        return
+    print("\n=======================================================")
+    print(" Step 6: Held-out Benchmark (H / G / P / Q sets, vs. old v1 and real Presidio)")
+    print("=======================================================")
+    import gc
+    del pipeline
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    try:
+        from validate_model import run_validation, print_benchmark_table
+        results = run_validation(
+            args.output_dir,
+            device=args.device,
+            n_ai4privacy=args.benchmark_n_ai4privacy,
+            max_chars=args.max_chars,
+            skip_presidio=args.benchmark_skip_presidio,
+            hf_token=active_token
+        )
+        print_benchmark_table(results)
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        print(f"\n[Benchmark] Failed ({type(e).__name__}: {e}). The trained model is saved; re-run with:\n"
+              f"  python validate_model.py --model-dir {args.output_dir}")
 
 
 if __name__ == "__main__":

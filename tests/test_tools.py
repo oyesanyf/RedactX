@@ -100,6 +100,36 @@ def test_calibrate_rejects_empty_inputs(engine):
         calibrate(engine, [], ["clean text"], 0.95)
 
 
+def test_stratified_threshold_protects_the_hard_source():
+    import random
+    from calibrate_thresholds import _choose_stratified
+    from redactx.production.thresholds import threshold_for_recall
+    rng = random.Random(7)
+    easy = [0.99 + 0.01 * rng.random() for _ in range(600)]       # e.g. generator notes
+    hard = [rng.random() for _ in range(300)]                       # e.g. a harder real-text source
+    target = 0.9
+    t, method, per = _choose_stratified({"easy": easy, "hard": hard}, target, 0.95)
+    assert method["binding_source"] == "hard" and method["target_certified"] is True
+    assert set(per) == {"easy", "hard"} and t == pytest.approx(per["hard"]["threshold"])
+    # each source meets the target on its own at the chosen threshold
+    assert sum(s >= t for s in hard) / len(hard) >= target
+    assert sum(s >= t for s in easy) / len(easy) >= target
+    # pooling would have chosen a higher threshold that fails the hard source
+    pooled = threshold_for_recall(easy + hard, target)
+    assert pooled > t and sum(s >= pooled for s in hard) / len(hard) < target
+
+
+def test_calibrate_reports_per_source_recall(engine):
+    positives, negatives = load_generator(40, seed=4242)
+    tagged = [{**d, "source": "a" if i % 2 else "b"} for i, d in enumerate(positives)]
+    target = 0.9
+    cfg, _ = calibrate(engine, tagged, negatives + HELD_OUT_CLEAN, target, batch_size=8, sources="test")
+    per = cfg.doc_operating_point["per_source"]
+    assert set(per) == {"a", "b"}
+    assert all(v["recall_at_chosen"] >= target for v in per.values())
+    assert cfg.doc_operating_point["binding_source"] in per
+
+
 # ============================================================================ load test vs live server
 def _free_port():
     with socket.socket() as s:

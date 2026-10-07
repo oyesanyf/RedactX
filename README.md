@@ -383,6 +383,53 @@ Latency of `engine.evaluate_text` (one ≤ 600-char window, GPU, 745 calls): med
   - P's clean twins are made with the same generic-replacement idea as the training negatives (from different
     datasets), so P's near-perfect document scores are the most favourable setting for this recipe.
 
+**Calibrated operating point: measured, and why calibration changed**
+
+The first calibration run used the *point estimate*. It took the largest threshold that reached recall 0.98 on
+the 450 PHI / 600 clean calibration documents, which gave doc 0.9742 and span 0.5813. Same held-out sets as
+above:
+
+| Metric (held-out) | At 0.5 | Point-estimate calibrated (0.974 / 0.581) |
+|---|---|---|
+| H doc recall / specificity | 1.000 / 0.667 | **0.800** / 1.000 |
+| G doc recall / specificity | 1.000 / 0.467 | 1.000 / 0.683 |
+| P doc recall / specificity | 0.995 / 0.995 | **0.955** / 1.000 |
+| Q specificity (PubMed) | 0.990 | 1.000 |
+| Char P / R / F1: RedactX on P | 0.896 / 0.955 / 0.925 | 0.910 / 0.949 / 0.929 |
+| Char P / R / F1: Hybrid on P | 0.853 / 0.972 / 0.908 | 0.864 / 0.968 / 0.913 |
+| Char P / R / F1: Hybrid on L | 0.831 / 0.980 / 0.899 | 0.840 / 0.978 / 0.904 |
+
+- Specificity improved a lot: clean generator notes flagged fell from 32/60 to 19/60, and clean handwritten
+  sentences from 5/15 to 0/15.
+- **Document recall fell below target:** 0.80 on H (3 of 15 missed) and 0.955 on P.
+- Most of v2's PHI scores sit between 0.97 and 1.0, but real-text (ai4privacy) documents have a tail that reaches
+  down to about 0.5. The pooled threshold sat inside that tail.
+- Span-level (character) recall moved less than a point. In `redactx` / `hybrid` modes, redaction comes from spans,
+  so a document-level miss leaks only if no span is found either.
+
+`calibrate_thresholds.py` now guards against this in two ways:
+- **One-sided 95% Wilson lower bound:** the threshold is chosen so the lower bound on recall, not the sample
+  recall, meets the target. On its own (pooled) this only moved v2 to doc 0.9720 / span 0.5159.
+- **Per-source stratification:** each source must meet the target on its own. This was the real cause: the 150
+  generator positives score about 0.98–1.0 and were hiding the 300 ai4privacy positives.
+
+Measured per-source result for v2 at target 0.98:
+
+| | ai4privacy (300 docs / 2,019 spans) | generator (150 docs / 875 spans) | **Chosen** |
+|---|---|---|---|
+| doc threshold (95% LB ≥ 0.98) | 0.5212 | 0.9774 | **0.5212** (ai4privacy binds) |
+| span threshold (95% LB ≥ 0.98) | 0.4511 | 0.8859 | **0.4510** |
+
+At the chosen point on the calibration set:
+- Doc recall is 0.9956 (lower bound 0.980) and specificity 0.848. This is the same as at 0.5.
+- Span touch-recall is 0.990 and token specificity 0.946.
+
+The result: **v2 cannot reach 98% recall on real-text PII at a high document threshold.** The specificity
+gains of the 0.974 threshold were paid for in leaks. The certified operating point is essentially 0.5. Better
+specificity on clean clinical text needs a better checkpoint, not a different threshold.
+
+Held-out results at 0.521 / 0.451 will be added here once `validate_model.py` has been re-run with them.
+
 > [!IMPORTANT]
 > None of these sets are real clinical notes. Before production use, measure per-category recall on a clinical
 > de-identification corpus (e.g. n2c2 2014) and on your own annotated documents, with thresholds calibrated by
@@ -425,7 +472,7 @@ RedactX/
 │   │   ├── detectors.py          # RedactXDetector, PresidioDetector, HybridDetector
 │   │   ├── hipaa.py              # HIPAA Safe Harbor categories + label mapping
 │   │   ├── redactor.py           # strategies + fail-closed policy
-│   │   ├── thresholds.py         # ThresholdConfig, threshold_for_recall
+│   │   ├── thresholds.py         # ThresholdConfig, Wilson lower-bound threshold selection
 │   │   ├── settings.py           # REDACTX_* settings, validated at start-up
 │   │   ├── metrics.py            # Prometheus metrics
 │   │   └── server.py             # hardened FastAPI app

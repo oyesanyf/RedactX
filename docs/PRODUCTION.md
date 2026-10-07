@@ -208,16 +208,33 @@ on held-out data:
 python calibrate_thresholds.py --model-dir ./models/RedactX-v2 --target-recall 0.98
 ```
 
-- **doc_threshold** — largest P(PHI) threshold that still flags ≥ target of the PHI documents.
-- **span_threshold** — largest span-head threshold such that ≥ target of gold PHI spans have at least one token
-  above it.
+- **doc_threshold**: the largest P(PHI) threshold at which the one-sided **95% Wilson lower bound** on document
+  recall still meets the target.
+- **span_threshold**: the same idea for gold PHI spans, where a span counts as found if at least one of its
+  tokens is above the threshold. Spans within one document are correlated, so this bound is somewhat
+  optimistic.
+- **Per source:** positives are grouped by source (ai4privacy, generator). Each group must meet the target on its
+  own, and the final threshold is the minimum of the per-source thresholds.
+  - The output records `binding_source` and, under `per_source`, each source's threshold, lower bound and recall
+    at the chosen threshold.
+- **Why:** the old point estimate (the largest threshold reaching the target *on the pooled sample*) overfits.
+  - On v2 it chose 0.974, and held-out document recall came out at 0.80 (H) and 0.955 (P) instead of 0.98.
+  - Stratified with the lower bound, ai4privacy binds at 0.521 (generator alone would allow 0.977).
+- **Flags:**
+  - `--confidence 0.9` loosens the bound.
+  - `--point-estimate` restores the old behaviour.
+  - If a source has too few positives to certify the target, the script warns (`target_certified: false`) and
+    sets the threshold to flag every calibration positive of that source.
 - Data: ai4privacy validation docs *after* the first 1000 (the benchmark uses the first 200) with their clean
   twins, PubMedQA `pqa_labeled` after the first 200, and generator notes with seed 4242. All disjoint from
   training and from `validate_model.py`.
-- Output: `<model-dir>/redactx_thresholds.json`, including the operating point (recall, specificity, precision)
-  and the provenance string, which `/v2/info` reports. The script warns when the target recall forces
-  specificity below 0.5.
+- Output: `<model-dir>/redactx_thresholds.json`, including the operating point (recall, its lower bound,
+  specificity, precision) and the provenance string, which `/v2/info` reports. The script warns when the target
+  recall forces specificity below 0.5.
 - Use `--dry-run` to inspect without writing; `--sources generator` works offline.
+
+Calibration controls *sampling* error only. Held-out sets from a different distribution (e.g. the handwritten
+set H) can still fall short. Always re-run `validate_model.py` afterwards, and calibrate on your own documents.
 
 Re-run calibration whenever the checkpoint changes, and ideally on a sample of **your** documents.
 

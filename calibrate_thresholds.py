@@ -4,12 +4,21 @@ Calibrate RedactX operating thresholds for a target recall.
 A redaction system is judged by its misses. Instead of a fixed 0.5 cut-off, this script measures the
 checkpoint's scores on held-out documents and picks:
 
-  doc_threshold   the largest P(PHI) threshold that still flags >= target_recall of PHI documents
-  span_threshold  the largest span-head token-probability threshold such that >= target_recall of gold
-                  PHI spans have at least one token above it ("touch" recall: the span is at least
-                  partially found; the span head then grows the span over contiguous tokens)
+  doc_threshold   the largest P(PHI) threshold such that, with --confidence (default 95%), the true recall on
+                  PHI documents is at least --target-recall (one-sided Wilson lower bound)
+  span_threshold  the same for gold PHI spans, where a span counts as found if at least one of its tokens is
+                  above the threshold ("touch" recall; the span head then grows the span over contiguous tokens)
 
-and writes them to <model_dir>/redactx_thresholds.json, which the engine and the production server load.
+Why a lower bound: the largest threshold that *just* reaches the target on the calibration sample sits at the
+edge of the score distribution, so on new data it misses the target about half the time. (Measured on v2: the
+point-estimate doc threshold 0.974 gave 0.80 / 0.955 recall on held-out sets H / P.) `--point-estimate`
+restores that behaviour.
+
+Why per source: positives are grouped by source (ai4privacy, generator) and EACH group must meet the target; the
+threshold is the minimum of the per-source thresholds. Pooling lets easy positives (generator notes score ~0.99)
+hide a hard source.
+
+The thresholds are written to <model_dir>/redactx_thresholds.json, which the engine and the production server load.
 The script also reports the price paid for that recall (specificity / precision at the chosen point).
 
 Calibration data is DISJOINT from the documents validate_model.py benchmarks on:
@@ -27,12 +36,14 @@ Usage:
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
 from typing import Dict, List, Optional, Sequence, Tuple
 
-from redactx.production.thresholds import ThresholdConfig, operating_point, threshold_for_recall
+from redactx.production.thresholds import (ThresholdConfig, conservative_threshold_for_recall, operating_point,
+                                           threshold_for_recall)
 
 GoldSpan = Tuple[int, int]
 
@@ -59,11 +70,54 @@ def gold_span_scores(token_probs: Sequence[float], raw_ranges: Sequence[Tuple[in
     return pos, neg
 
 
-def calibrate(engine, positives: Sequence[Dict], negatives: Sequence[str], target_recall: float,
-              batch_size: int = 8, sources: str = "") -> Tuple[ThresholdConfig, Dict]:
+def _floor6(x: float) -> float:
+    """Floor to 6 decimals: rounding up could move the threshold above the boundary positive's score."""
+    return math.floor(float(x) * 1e6) / 1e6
+
+
+def _choose(scores: Sequence[float], target_recall: float, confidence: Optional[float]) -> Tuple[float, Dict]:
+    if confidence is None:
+        return threshold_for_recall(scores, target_recall), {"method": "point estimate"}
+    t, lb, ok = conservative_threshold_for_recall(scores, target_recall, confidence)
+    return t, {"method": f"Wilson lower bound, one-sided {confidence:.0%}", "recall_lower_bound": round(lb, 4),
+               "target_certified": ok}
+
+
+def _choose_stratified(groups: Dict[str, List[float]], target_recall: float, confidence: Optional[float]
+                       ) -> Tuple[float, Dict, Dict[str, Dict]]:
     """
-    positives: [{"text": str, "spans": [(start, end, label), ...]}]   (documents that contain PHI)
+    Every source must meet the target on its own; the threshold is the minimum of the per-source thresholds.
+    Pooling hides a hard source behind an easy one (measured on v2: easy generator positives let the pooled
+    threshold reach 0.98 while ai4privacy-like documents got 0.955 held-out recall).
+    """
+    per: Dict[str, Dict] = {}
+    best_t: Optional[float] = None
+    best_method: Dict = {}
+    for name, scores in sorted(groups.items()):
+        if not scores:
+            continue
+        t, method = _choose(scores, target_recall, confidence)
+        per[name] = {"threshold": round(t, 6), "n_pos": len(scores), **method}
+        if best_t is None or t < best_t:
+            best_t, best_method = t, dict(method)
+            best_method["binding_source"] = name
+    if best_t is None:
+        raise ValueError("no positive scores to calibrate on")
+    if confidence is not None:
+        best_method["target_certified"] = all(p.get("target_certified", True) for p in per.values())
+    return best_t, best_method, per
+
+
+def calibrate(engine, positives: Sequence[Dict], negatives: Sequence[str], target_recall: float,
+              batch_size: int = 8, sources: str = "", confidence: Optional[float] = 0.95
+              ) -> Tuple[ThresholdConfig, Dict]:
+    """
+    positives: [{"text": str, "spans": [(start, end, label), ...], "source": str (optional)}]
+               (documents that contain PHI; positives are calibrated per "source", see _choose_stratified)
     negatives: [str]                                                  (documents that contain no PHI)
+    confidence: choose the largest threshold whose one-sided lower confidence bound on recall still meets
+                target_recall (default 0.95). None = point estimate (threshold at the edge of the sample,
+                which falls below target on new data about half the time).
     Returns (ThresholdConfig, diagnostics).
     """
     if not positives or not negatives:
@@ -75,36 +129,55 @@ def calibrate(engine, positives: Sequence[Dict], negatives: Sequence[str], targe
     neg_res = engine.score_texts(list(negatives), batch_size=batch_size)
     elapsed = time.perf_counter() - t0
 
+    srcs = [str(d.get("source", "all")) for d in positives]
     pos_doc = [r["p_phi"] for r in pos_res]
     neg_doc = [r["p_phi"] for r in neg_res]
-    doc_t = threshold_for_recall(pos_doc, target_recall)
-    doc_op = operating_point(pos_doc, neg_doc, doc_t)
-    default_doc_op = operating_point(pos_doc, neg_doc, 0.5)
+    doc_groups: Dict[str, List[float]] = {}
+    for s, p in zip(srcs, pos_doc):
+        doc_groups.setdefault(s, []).append(p)
+    doc_t, doc_method, doc_per = _choose_stratified(doc_groups, target_recall, confidence)
+    doc_t = _floor6(doc_t)
+    doc_op = operating_point(pos_doc, neg_doc, doc_t, confidence)
+    doc_op.update(doc_method)
+    doc_op["per_source"] = {k: {**v, "recall_at_chosen": operating_point(doc_groups[k], neg_doc, doc_t)["recall"]}
+                            for k, v in doc_per.items()}
 
     span_t = float(getattr(engine, "span_threshold", 0.5))
     span_op: Dict = {}
     diag: Dict = {"n_pos_docs": len(pos_doc), "n_neg_docs": len(neg_doc), "seconds": round(elapsed, 1),
-                  "doc_at_0.5": default_doc_op}
+                  "doc_at_0.5": operating_point(pos_doc, neg_doc, 0.5, confidence),
+                  "doc_pooled_point_estimate_threshold": round(threshold_for_recall(pos_doc, target_recall), 6)}
     if has_span_head:
+        span_groups: Dict[str, List[float]] = {}
         span_pos: List[float] = []
         span_neg: List[float] = []
-        for d, r in zip(positives, pos_res):
-            p, n = gold_span_scores(r["token_probs"], r["raw_ranges"], [(s, e) for s, e, *_ in d["spans"]])
+        for s, d, r in zip(srcs, positives, pos_res):
+            p, n = gold_span_scores(r["token_probs"], r["raw_ranges"], [(a, b) for a, b, *_ in d["spans"]])
+            span_groups.setdefault(s, []).extend(p)
             span_pos.extend(p)
             span_neg.extend(n)
         if span_pos:
-            span_t = threshold_for_recall(span_pos, target_recall)
-            span_op = operating_point(span_pos, span_neg, span_t)
-            span_op["unit"] = "recall = gold spans touched; specificity/precision = non-PHI tokens"
-            diag["span_at_0.5"] = operating_point(span_pos, span_neg, 0.5)
+            span_t, span_method, span_per = _choose_stratified(span_groups, target_recall, confidence)
+            span_t = _floor6(span_t)
+            span_op = operating_point(span_pos, span_neg, span_t, confidence)
+            span_op.update(span_method)
+            span_op["per_source"] = {
+                k: {**v, "recall_at_chosen": operating_point(span_groups[k], span_neg, span_t)["recall"]}
+                for k, v in span_per.items()}
+            span_op["unit"] = ("recall = gold spans touched; specificity/precision = non-PHI tokens. Spans in one "
+                               "document are correlated, so the span lower bound is somewhat optimistic.")
+            diag["span_at_0.5"] = operating_point(span_pos, span_neg, 0.5, confidence)
+            diag["span_pooled_point_estimate_threshold"] = round(threshold_for_recall(span_pos, target_recall), 6)
     else:
         diag["span_note"] = "checkpoint has no span head; span_threshold left unchanged"
 
     cfg = ThresholdConfig(
-        doc_threshold=round(doc_t, 6),
-        span_threshold=round(span_t, 6),
+        doc_threshold=doc_t,
+        span_threshold=span_t if not has_span_head else _floor6(span_t),
         target_recall=target_recall,
+        confidence=confidence,
         calibrated_on=f"{sources} | {len(pos_doc)} PHI docs / {len(neg_doc)} clean docs | "
+                      f"{'point estimate' if confidence is None else f'{confidence:.0%} lower bound'} | "
                       f"{time.strftime('%Y-%m-%d', time.gmtime())}",
         doc_operating_point=doc_op,
         span_operating_point=span_op,
@@ -117,7 +190,7 @@ def load_generator(n: int, seed: int) -> Tuple[List[Dict], List[str]]:
     pos, neg = [], []
     for r in generate_redactx_corpus(num_samples=n, phi_ratio=0.5, seed=seed):
         if r["target"] == "Contains_PHI_PII" and r.get("spans"):
-            pos.append({"text": r["context"],
+            pos.append({"text": r["context"], "source": "generator",
                         "spans": [(int(s["start"]), int(s["end"]), str(s.get("category", "pii")))
                                   for s in r["spans"]]})
         elif r["target"] != "Contains_PHI_PII":
@@ -141,7 +214,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--max-chars", type=int, default=600)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--dry-run", action="store_true", help="print the result without writing the file")
+    ap.add_argument("--confidence", type=float, default=0.95,
+                    help="one-sided confidence that true recall >= target (Wilson lower bound). Default 0.95")
+    ap.add_argument("--point-estimate", action="store_true",
+                    help="old behaviour: threshold at the edge of the sample (no safety margin)")
     args = ap.parse_args(argv)
+    if not args.point_estimate and not 0.5 <= args.confidence < 1.0:
+        ap.error("--confidence must be in [0.5, 1)")
+    confidence = None if args.point_estimate else args.confidence
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -166,7 +246,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     used: List[str] = []
     if "ai4privacy" in sources:
         docs = load_ai4privacy_validation(args.n_ai4privacy, token, args.max_chars, offset=args.ai4privacy_offset)
-        positives += docs
+        positives += [{**d, "source": "ai4privacy"} for d in docs]
         negatives += [replace_spans_with_generic(d["text"], d["spans"]) for d in docs]
         used.append(f"ai4privacy-val[{args.ai4privacy_offset}:+{len(docs)}]+twins")
     if "pubmed" in sources:
@@ -182,10 +262,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     from redactx.models.openjev import OpenJevVaultGemmaEngine
     engine = OpenJevVaultGemmaEngine.from_pretrained(args.model_dir, device=args.device)
-    cfg, diag = calibrate(engine, positives, negatives, args.target_recall, args.batch_size, "; ".join(used))
+    cfg, diag = calibrate(engine, positives, negatives, args.target_recall, args.batch_size, "; ".join(used),
+                          confidence=confidence)
 
     print(json.dumps({"thresholds": cfg.__dict__, "diagnostics": diag}, indent=2))
     dop = cfg.doc_operating_point
+    for name, op in (("document", dop), ("span", cfg.span_operating_point)):
+        if op and op.get("target_certified") is False:
+            print(f"WARNING: not enough {name} positives to certify recall >= {args.target_recall} at "
+                  f"{confidence:.0%} confidence (best lower bound {op.get('recall_lower_bound')}). The threshold "
+                  "was set to flag every calibration positive; add calibration data or lower the target.",
+                  flush=True)
     if dop.get("specificity") is not None and dop["specificity"] < 0.5:
         print(f"WARNING: at recall {dop['recall']} the document specificity is only {dop['specificity']}: "
               "most clean documents will be flagged. The checkpoint does not separate PHI from clean text "

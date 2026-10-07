@@ -17,7 +17,8 @@ from redactx.production.detectors import Detection, Finding, merge_findings
 from redactx.production.hipaa import Category, HIPAA_IDENTIFIERS, is_hipaa_identifier, to_category
 from redactx.production.redactor import REDACTED_DOCUMENT, Redactor
 from redactx.production.settings import Settings, hash_api_key, read_dotenv
-from redactx.production.thresholds import ThresholdConfig, operating_point, threshold_for_recall
+from redactx.production.thresholds import (ThresholdConfig, conservative_threshold_for_recall, operating_point,
+                                           threshold_for_recall, wilson_lower_bound)
 
 presidio_available = pytest.importorskip  # alias for readability below
 
@@ -82,6 +83,43 @@ def test_threshold_for_recall_matches_definition():
         if higher:  # the next larger candidate threshold would miss the target
             t2 = min(higher)
             assert sum(s >= t2 for s in pos) / len(pos) < target
+
+
+def test_wilson_lower_bound_values():
+    z2 = 1.6448536269514722 ** 2
+    # all successes: closed form 1 / (1 + z^2 / n)
+    assert wilson_lower_bound(450, 450, 0.95) == pytest.approx(1 / (1 + z2 / 450), abs=1e-12)
+    assert wilson_lower_bound(446, 450, 0.95) == pytest.approx(0.98035, abs=2e-5)
+    assert wilson_lower_bound(444, 450, 0.95) < 0.98 < wilson_lower_bound(446, 450, 0.95)
+    assert wilson_lower_bound(7, 10, 0.5) == pytest.approx(0.7)          # 50% confidence = point estimate
+    assert wilson_lower_bound(0, 10, 0.95) == 0.0
+    with pytest.raises(ValueError):
+        wilson_lower_bound(1, 0)
+
+
+def test_conservative_threshold_is_lower_and_covers_true_recall():
+    """
+    Scores ~ Uniform(0, 1), so the TRUE recall at threshold t is exactly 1 - t. A 95% lower-bound threshold must
+    reach the target on the true distribution in about 95% of samples; the point estimate only in about half.
+    """
+    rng = random.Random(7)
+    target, n, trials = 0.9, 300, 400
+    cover_cons = cover_point = 0
+    for _ in range(trials):
+        pos = [rng.random() for _ in range(n)]
+        t_point = threshold_for_recall(pos, target)
+        t_cons, lb, ok = conservative_threshold_for_recall(pos, target, 0.95)
+        assert ok and t_cons <= t_point and lb >= target
+        cover_cons += (1 - t_cons) >= target
+        cover_point += (1 - t_point) >= target
+    assert cover_cons / trials >= 0.92
+    assert cover_point / trials <= 0.70
+    # too few positives to certify a high target -> flags every positive and says so
+    t, lb, ok = conservative_threshold_for_recall([0.9, 0.8, 0.7], 0.99, 0.95)
+    assert not ok and t == 0.7 and lb < 0.99
+    # ties: the threshold is always one of the scores and counts every tied positive
+    t, lb, ok = conservative_threshold_for_recall([0.9] * 50 + [0.1] * 2, 0.5, 0.95)
+    assert t == 0.9 and ok
 
 
 def test_operating_point_and_threshold_file(tmp_path):

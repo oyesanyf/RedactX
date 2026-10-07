@@ -28,10 +28,16 @@ Calibration data is DISJOINT from the documents validate_model.py benchmarks on:
   pubmed      PubMedQA pqa_labeled abstracts after --pubmed-offset (validate_model.py uses the first 100)
   generator   synthetic clinical notes from redactx.data.generator with a seed (default 4242) that differs
               from training and from the benchmark (1337); works offline
+  n2c2        n2c2 2014 de-identification corpus, TRAIN split only (benchmark_n2c2.py scores the test split);
+              notes cut into --max-chars windows; positives = windows with gold PHI (calibrated as their own
+              source, so real clinical notes must meet the target on their own), negatives = their generic twins
+              + PHI-free windows. Needs --n2c2-dir (DUA corpus, never downloaded)
 
 Usage:
     python calibrate_thresholds.py --model-dir ./models/RedactX-v2 --target-recall 0.98
     python calibrate_thresholds.py --model-dir ./models/RedactX-v2 --sources generator --dry-run
+    python calibrate_thresholds.py --model-dir ./models/RedactX-v3 --n2c2-dir D:/data/n2c2-2014
+        --sources ai4privacy,pubmed,generator,n2c2
 """
 
 import argparse
@@ -198,19 +204,65 @@ def load_generator(n: int, seed: int) -> Tuple[List[Dict], List[str]]:
     return pos, neg
 
 
+def load_n2c2_calibration(root: str, n_pos: int, max_chars: int, seed: int = 4242
+                          ) -> Tuple[List[Dict], List[str], Dict]:
+    """
+    n2c2 2014 TRAIN split only (benchmark_n2c2.py scores the test split, so calibration stays disjoint from it).
+    Notes are cut into production-sized windows.
+      positives  windows that contain gold PHI (source "n2c2"), up to n_pos, sampled with `seed`
+      negatives  the generic-replaced twin of every chosen positive window, plus up to n_pos // 2 windows that
+                 contain no gold PHI at all (real clinical text with nothing to redact)
+    """
+    import random
+    from redactx.data.contrastive_corpus import replace_spans_with_generic
+    from redactx.data.n2c2 import load_n2c2, windows_with_spans
+
+    docs, report = load_n2c2(root, split="train")
+    with_phi: List[Dict] = []
+    clean: List[str] = []
+    for doc in docs:
+        for w in windows_with_spans(doc, max_chars=max_chars):
+            if not w["text"].strip():
+                continue
+            if w["spans"]:
+                with_phi.append(w)
+            else:
+                clean.append(w["text"])
+    rng = random.Random(seed)
+    rng.shuffle(with_phi)
+    rng.shuffle(clean)
+    pos = []
+    for w in with_phi[:max(0, n_pos)]:
+        spans: List[Tuple[int, int, str]] = []
+        for s, e, lab in sorted(w["spans"]):
+            if spans and s < spans[-1][1]:          # overlapping tags: keep one, extended to cover both
+                ps, pe, pl = spans[-1]
+                spans[-1] = (ps, max(pe, e), pl)
+            else:
+                spans.append((s, e, lab))
+        pos.append({"text": w["text"], "spans": spans, "source": "n2c2"})
+    neg = [replace_spans_with_generic(d["text"], d["spans"]) for d in pos]
+    neg += clean[:max(0, n_pos // 2)]
+    report = {**report, "windows_with_phi": len(with_phi), "windows_without_phi": len(clean),
+              "pos_used": len(pos), "neg_used": len(neg)}
+    return pos, neg, report
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="Calibrate RedactX thresholds for a target recall")
     ap.add_argument("--model-dir", required=True)
     ap.add_argument("--device", default=None)
     ap.add_argument("--target-recall", type=float, default=0.98)
     ap.add_argument("--sources", default="ai4privacy,pubmed,generator",
-                    help="comma list of: ai4privacy, pubmed, generator")
+                    help="comma list of: ai4privacy, pubmed, generator, n2c2 (n2c2 needs --n2c2-dir)")
     ap.add_argument("--n-ai4privacy", type=int, default=300)
     ap.add_argument("--ai4privacy-offset", type=int, default=1000)
     ap.add_argument("--n-pubmed", type=int, default=150)
     ap.add_argument("--pubmed-offset", type=int, default=200)
     ap.add_argument("--n-generator", type=int, default=300)
     ap.add_argument("--generator-seed", type=int, default=4242)
+    ap.add_argument("--n2c2-dir", default=None, help="unpacked n2c2 2014 corpus (only the TRAIN split is used here)")
+    ap.add_argument("--n-n2c2", type=int, default=300, help="n2c2 PHI windows to calibrate on")
     ap.add_argument("--max-chars", type=int, default=600)
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--dry-run", action="store_true", help="print the result without writing the file")
@@ -226,9 +278,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sources = [s.strip() for s in args.sources.split(",") if s.strip()]
-    unknown = set(sources) - {"ai4privacy", "pubmed", "generator"}
+    unknown = set(sources) - {"ai4privacy", "pubmed", "generator", "n2c2"}
     if unknown:
         ap.error(f"unknown sources: {sorted(unknown)}")
+    if "n2c2" in sources and not args.n2c2_dir:
+        ap.error("source n2c2 needs --n2c2-dir (the corpus requires a DUA and is never downloaded)")
 
     from redactx.data.contrastive_corpus import replace_spans_with_generic
     from validate_model import load_ai4privacy_validation, load_pubmedqa_labeled
@@ -258,6 +312,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         positives += gp
         negatives += gn
         used.append(f"generator(seed={args.generator_seed},n={args.n_generator})")
+    if "n2c2" in sources:
+        np_, nn, rep = load_n2c2_calibration(args.n2c2_dir, args.n_n2c2, args.max_chars, args.generator_seed)
+        positives += np_
+        negatives += nn
+        used.append(f"n2c2-2014-train(windows={len(np_)}+{len(nn)})")
+        print(f"n2c2 train: {rep['files']} notes, {rep['tags']} tags ({rep['relocated']} relocated, "
+              f"{rep['dropped']} dropped), {rep['windows_with_phi']} PHI windows / "
+              f"{rep['windows_without_phi']} PHI-free windows", flush=True)
     print(f"Calibration data: {len(positives)} PHI docs, {len(negatives)} clean docs ({', '.join(used)})", flush=True)
 
     from redactx.models.openjev import OpenJevVaultGemmaEngine

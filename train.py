@@ -8,8 +8,13 @@ Executes the four sequential engineering phases:
 5. Permutation Stability & ECE Validation, followed by merge_and_unload() Export.
 
 Usage:
-    # Recommended: contrastive recipe (real PII vs. same-text-without-PII vs. natural clean text) + span head:
-    python train.py --model google/vaultgemma-1b --force-vaultgemma --recipe-contrastive --samples 2000 --epochs 3 --output-dir ./models/RedactX-v2
+    # Recommended (v3): contrastive recipe (real PII vs. same-text-without-PII vs. natural clean text) + span head,
+    # plus clinical hard negatives, synthetic clinical PHI/clean pairs and AGE/DEMOGRAPHIC upweighting (all default):
+    python train.py --model google/vaultgemma-1b --force-vaultgemma --recipe-contrastive --samples 2000 --epochs 3 --output-dir ./models/RedactX-v3
+
+    # The v2 recipe (no hard negatives / pairs / upweighting):
+    python train.py --model google/vaultgemma-1b --force-vaultgemma --recipe-contrastive --samples 2000 --epochs 3
+        --hard-negative-ratio 0 --clinical-pair-ratio 0 --span-category-weights "" --oversample-factor 1 --output-dir ./models/RedactX-v2b
 
     # Legacy recipe:
     python train.py --model google/vaultgemma-1b --force-vaultgemma --samples 500 --epochs 3 --output-dir ./models/openjev_vaultgemma
@@ -117,6 +122,19 @@ def main():
                              "Noul-only records with token-level span labels. Recommended.")
     parser.add_argument("--natural-negative-ratio", type=float, default=0.5,
                         help="Contrastive recipe: natural clean docs per PII doc (default: 0.5)")
+    parser.add_argument("--hard-negative-ratio", type=float, default=0.75,
+                        help="Contrastive recipe: clean CLINICAL docs per PII doc (PubMedQA pqa_unlabeled, WikiDoc, "
+                             "synthetic identifier-free notes). Fixes over-flagging of clean clinical text. "
+                             "0 = off (v2 recipe). Default: 0.75")
+    parser.add_argument("--clinical-pair-ratio", type=float, default=0.25,
+                        help="Contrastive recipe: synthetic clinical PHI notes (each with its natural clean twin) "
+                             "per PII doc. 0 = off. Default: 0.25")
+    parser.add_argument("--span-category-weights", type=str, default="AGE=3,DEMOGRAPHIC=3",
+                        help="Span-head loss weight per HIPAA category, e.g. 'AGE=3,DEMOGRAPHIC=3'. '' = off")
+    parser.add_argument("--oversample-categories", type=str, default="AGE,DEMOGRAPHIC",
+                        help="Repeat training positives containing these categories (with their twins). '' = off")
+    parser.add_argument("--oversample-factor", type=int, default=2,
+                        help="Copies of each oversampled positive/twin pair (default: 2)")
     parser.add_argument("--max-chars", type=int, default=600,
                         help="Contrastive recipe: max characters of text per record (default: 600)")
     parser.add_argument("--max-length", type=int, default=384,
@@ -182,16 +200,26 @@ def main():
         print(" Step 1: Building Contrastive Corpus")
         print("   (real PII docs + generic-replaced twins + natural clean text; ai4privacy held out)")
         print("=======================================================")
+        from redactx.data.contrastive_corpus import parse_category_weights
         train_records, val_records, stats = load_contrastive_corpus(
             num_pii_docs=args.samples,
             natural_negative_ratio=args.natural_negative_ratio,
             max_chars=args.max_chars,
             seed=args.seed,
-            hf_token=active_token
+            hf_token=active_token,
+            hard_negative_ratio=args.hard_negative_ratio,
+            clinical_pair_ratio=args.clinical_pair_ratio,
+            span_category_weights=parse_category_weights(args.span_category_weights),
+            oversample_categories=tuple(c.strip() for c in args.oversample_categories.split(",") if c.strip()),
+            oversample_factor=args.oversample_factor,
         )
         print("\n[Corpus Composition - Contrastive Recipe]")
         print(f"  - PII docs (Nemotron-PII / Gretel):           {stats['pii_docs_nemotron']} / {stats['pii_docs_gretel']}")
+        print(f"  - Synthetic clinical PHI/clean pairs:         {stats['clinical_pair_docs']}")
         print(f"  - Natural clean docs:                         {stats['natural_negative_docs']} {stats['natural_negative_sources']}")
+        print(f"  - Clinical hard negatives:                    {stats['hard_negative_docs']} {stats['hard_negative_sources']}")
+        print(f"  - Span category weights / oversampling:       {stats['span_category_weights']} / {stats['oversample']}")
+        print(f"  - Train gold spans by category:               {stats['train_gold_spans_by_category']}")
         print(f"  - Train records (PHI / clean):                {stats['train_positives']} / {stats['train_negatives']}")
         print(f"  - Val records (PHI / clean):                  {stats['val_positives']} / {stats['val_negatives']}")
     else:

@@ -51,7 +51,8 @@ class Detection:
 
 
 # Prefer the more specific category when findings from several detectors overlap.
-_SOURCE_PRIORITY = {"presidio": 0, "redactx": 1}
+# A verified structured identifier (checksum / format + keyword) is the most specific evidence.
+_SOURCE_PRIORITY = {"validator": -1, "presidio": 0, "redactx": 1}
 
 
 def merge_findings(text: str, findings: Sequence[Finding]) -> List[Finding]:
@@ -68,21 +69,41 @@ def merge_findings(text: str, findings: Sequence[Finding]) -> List[Finding]:
     merged: List[Finding] = []
     for g in groups:
         s, e = min(x.start for x in g), max(x.end for x in g)
-        best = sorted(g, key=lambda x: (_SOURCE_PRIORITY.get(x.sources[0], 9),
+        best = sorted(g, key=lambda x: (min(_SOURCE_PRIORITY.get(src, 9) for src in x.sources),
                                         x.category == Category.UNKNOWN, -(x.end - x.start)))[0]
         sources = tuple(sorted({src for x in g for src in x.sources}))
         merged.append(Finding(s, e, text[s:e], best.category, max(x.score for x in g), sources))
     return merged
 
 
+VALIDATOR_SCORE = 0.99
+
+
+def validator_findings(text: str, validator) -> List[Finding]:
+    """Verified structured identifiers (redactx.production.validators) as Findings with source 'validator'."""
+    return [Finding(m.start, m.end, text[m.start:m.end], m.category, VALIDATOR_SCORE, ("validator",))
+            for m in validator.find(text)]
+
+
 class RedactXDetector:
+    """
+    The fine-tuned model, plus (by default) verified structured-identifier validators inside the same detector:
+    a validator match that overlaps a model span CONFIRMS it (sources include both, span = union, validator
+    category wins); a validator match the model missed is ADDED. Validators never remove model spans.
+    Pass validators=None to get the model alone.
+    """
     name = "redactx"
 
-    def __init__(self, engine, max_chars: int = 600, overlap: int = 150, batch_size: int = 8):
+    def __init__(self, engine, max_chars: int = 600, overlap: int = 150, batch_size: int = 8,
+                 validators="default"):
         self.engine = engine
         self.max_chars = max_chars
         self.overlap = overlap
         self.batch_size = batch_size
+        if validators == "default":
+            from redactx.production.validators import StructuredIdValidator
+            validators = StructuredIdValidator()
+        self.validators = validators
         self._lock = threading.Lock()  # one inference at a time per model instance (GPU memory)
 
     @property
@@ -112,7 +133,10 @@ class RedactXDetector:
                                                     float(sp.confidence), (self.name,)))
         out: List[Detection] = []
         for di, t in enumerate(texts):
-            findings = merge_findings(t, per_doc_findings[di])
+            model_findings = per_doc_findings[di]
+            if self.validators is not None:
+                model_findings = model_findings + validator_findings(t, self.validators)
+            findings = merge_findings(t, model_findings)
             doc_score = max(per_doc_scores[di]) if per_doc_scores[di] else 0.0
             flagged = doc_score >= self.doc_threshold
             out.append(Detection(
@@ -121,7 +145,7 @@ class RedactXDetector:
                 doc_score=round(doc_score, 6),
                 unlocalized_phi=flagged and not findings,
                 windows=sum(1 for d, _ in plan if d == di),
-                detectors=[self.name],
+                detectors=[self.name] + (["validator"] if self.validators is not None else []),
             ))
         return out
 

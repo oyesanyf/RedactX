@@ -30,6 +30,19 @@ from redactx.data.openjev_dataset import (
 logger = logging.getLogger("redactx.openjev_trainer")
 
 
+def span_bce(span_logits: torch.Tensor, labels: torch.Tensor, token_weights: Optional[torch.Tensor],
+             pos_weight: float) -> torch.Tensor:
+    """
+    Span-head loss: BCE over raw-text tokens only (labels != -100), with pos_weight for the rare PHI class and,
+    when the batch carries them, per-token weights (category upweighting, e.g. AGE / DEMOGRAPHIC x3).
+    """
+    valid = labels != -100
+    w = token_weights.to(span_logits.device)[valid] if token_weights is not None else None
+    return F.binary_cross_entropy_with_logits(
+        span_logits[valid], labels[valid].float(), weight=w,
+        pos_weight=torch.tensor(pos_weight, device=span_logits.device))
+
+
 class OpenJevFineTuningPipeline:
     """
     End-to-end fine-tuning pipeline for OpenJev VaultGemma models.
@@ -270,10 +283,8 @@ class OpenJevFineTuningPipeline:
                     valid = labels != -100
                     if valid.any():
                         span_logits = self.span_locator(outputs.hidden_states[-1].float())
-                        span_loss = F.binary_cross_entropy_with_logits(
-                            span_logits[valid], labels[valid].float(),
-                            pos_weight=torch.tensor(self.span_pos_weight, device=self.device)
-                        )
+                        span_loss = span_bce(span_logits, labels, batch.get("token_span_weights"),
+                                             self.span_pos_weight)
                         loss = loss + self.lambda_span * span_loss
                         span_loss_val = span_loss.item()
 

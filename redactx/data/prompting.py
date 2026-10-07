@@ -70,3 +70,27 @@ def token_span_labels(
         else:
             labels.append(1 if any(k in pii for k in range(rs, re_)) else 0)
     return labels
+
+
+def token_span_weights(
+    offsets: List[Tuple[int, int]],
+    raw_index: List[int],
+    pii_spans: List[Tuple[int, int]],
+    span_weights: List[float],
+) -> List[float]:
+    """
+    Per-token loss weights for the span head: a token overlapping PII spans gets the largest weight among those
+    spans; every other raw-text token gets 1.0; template / special tokens get 0.0 (they are ignored anyway).
+    """
+    char_w = {}
+    for (s, e), w in zip(pii_spans, span_weights):
+        for k in range(s, e):
+            if w > char_w.get(k, 0.0):
+                char_w[k] = float(w)
+    weights: List[float] = []
+    for rs, re_ in token_raw_ranges(offsets, raw_index):
+        if rs < 0:
+            weights.append(0.0)
+        else:
+            weights.append(max([char_w[k] for k in range(rs, re_) if k in char_w], default=1.0))
+    return weights

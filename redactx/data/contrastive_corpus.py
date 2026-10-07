@@ -13,6 +13,12 @@ This corpus gives the model real contrast:
                       so the only difference between the pair is the presence of PII.
   * Natural neg     - varied clean text from other domains: PubMed abstracts (qiaojin/PubMedQA),
                       medical flashcards (medalpaca), and code (python_code_instructions_18k_alpaca).
+  * Hard neg        - (hard_negative_ratio) clean CLINICAL text: PubMedQA pqa_unlabeled abstracts, WikiDoc
+                      clinical reference text, and synthetic identifier-free clinical notes (redactx.data.clean_notes).
+                      v2 over-flagged clean clinical-style notes and calibration could not fix it; this is the fix.
+  * Clinical pairs  - (clinical_pair_ratio) synthetic clinical notes with PHI (rich in ages and demographics) and
+                      their natural clean twins (same note, identifiers replaced by non-identifying wording).
+  * Span weighting  - span_category_weights / oversample_categories upweight weak categories (AGE, DEMOGRAPHIC).
 
 ai4privacy/pii-masking-openpii-1m is deliberately NOT used here so it stays a held-out evaluation source.
 The train/val split is done per source document, so a positive and its contrastive negative always land
@@ -201,11 +207,84 @@ def load_natural_negatives(n: int, token: Optional[str]) -> List[Dict[str, Any]]
     return docs
 
 
+def load_hard_negatives(n: int, token: Optional[str], seed: int = 2028, max_chars: int = 600,
+                        allow_download: bool = True) -> List[Dict[str, Any]]:
+    """
+    Clinical-style CLEAN text, the hard negatives that teach specificity on medical prose:
+      ~40% PubMedQA pqa_unlabeled abstracts (evaluation uses pqa_labeled; natural negatives use pqa_artificial)
+      ~20% medalpaca/medical_meadow_wikidoc clinical reference text
+      rest synthetic identifier-free clinical notes (redactx.data.clean_notes), which also fill any shortfall
+           when the Hub is unreachable
+    """
+    from redactx.data.clean_notes import generate_clean_notes
+    docs: List[Dict[str, Any]] = []
+    if n <= 0:
+        return docs
+    plan = [("pubmed_unlabeled", int(n * 0.4)), ("wikidoc", int(n * 0.2))] if allow_download else []
+    for kind, k in plan:
+        got = 0
+        try:
+            if kind == "pubmed_unlabeled":
+                for row in _stream("qiaojin/PubMedQA", token, config="pqa_unlabeled"):
+                    ctx = row.get("context") or {}
+                    t = " ".join(ctx.get("contexts", [])) if isinstance(ctx, dict) else str(ctx)
+                    if t.strip():
+                        docs.append({"source": "pubmedqa_unlabeled", "text": t.strip()[:max_chars], "spans": []})
+                        got += 1
+                    if got >= k:
+                        break
+            else:
+                for row in _stream("medalpaca/medical_meadow_wikidoc", token):
+                    t = str(row.get("output") or "").strip()
+                    if len(t) >= 80:
+                        docs.append({"source": "wikidoc", "text": t[:max_chars], "spans": []})
+                        got += 1
+                    if got >= k:
+                        break
+        except Exception as e:
+            logger.warning(f"hard negatives '{kind}' unavailable: {e}")
+    for t in generate_clean_notes(n - len(docs), seed=seed, max_chars=max_chars):
+        docs.append({"source": "synthetic_clean_note", "text": t, "spans": []})
+    return docs
+
+
+def load_clinical_pairs(n: int, seed: int = 2027, max_chars: int = 600) -> List[Dict[str, Any]]:
+    """Synthetic clinical notes with PHI spans (rich in AGE / DEMOGRAPHIC) and their natural clean twins."""
+    from redactx.data.clean_notes import generate_clinical_pairs
+    return [{"source": "synthetic_clinical", "text": d["text"], "spans": d["spans"], "twin": d["twin"]}
+            for d in generate_clinical_pairs(n, seed=seed, max_chars=max_chars)]
+
+
+def parse_category_weights(spec: Optional[str]) -> Dict[str, float]:
+    """'AGE=3,DEMOGRAPHIC=3' -> {'AGE': 3.0, 'DEMOGRAPHIC': 3.0}. Keys are redactx.production.hipaa.Category names."""
+    from redactx.production.hipaa import Category
+    out: Dict[str, float] = {}
+    for part in (spec or "").split(","):
+        if not part.strip():
+            continue
+        if "=" not in part:
+            raise ValueError(f"bad category weight '{part}', expected NAME=weight")
+        k, v = part.split("=", 1)
+        k = k.strip().upper()
+        if k not in Category.__members__:
+            raise ValueError(f"unknown category '{k}'; choose from {sorted(Category.__members__)}")
+        w = float(v)
+        if w <= 0:
+            raise ValueError(f"category weight for {k} must be > 0")
+        out[k] = w
+    return out
+
+
+def _span_category(label: str) -> str:
+    from redactx.production.hipaa import to_category
+    return to_category(label).value
+
+
 # ---------------------------------------------------------------- record building
 def make_record(rec_id: str, text: str, spans: List[Tuple[int, int, str]], is_phi: bool,
-                source: str, kind: str) -> Dict[str, Any]:
+                source: str, kind: str, span_weights: Optional[List[float]] = None) -> Dict[str, Any]:
     prompt, _ = build_noul_prompt(text, DEFAULT_NOUL_QUESTION)
-    return {
+    rec = {
         "id": rec_id,
         "primitive": "noul",
         "prompt": prompt,
@@ -218,6 +297,10 @@ def make_record(rec_id: str, text: str, spans: List[Tuple[int, int, str]], is_ph
         "pii_spans": [(s, e) for s, e, _ in spans],
         "metadata": {"is_phi": is_phi, "source": source, "kind": kind},
     }
+    if span_weights is not None:
+        # per-span loss weight (category upweighting); the Dataset turns it into per-token weights
+        rec["pii_span_weights"] = [float(w) for w in span_weights]
+    return rec
 
 
 def load_contrastive_corpus(
@@ -228,28 +311,62 @@ def load_contrastive_corpus(
     val_fraction: float = 0.1,
     seed: int = 42,
     hf_token: Optional[str] = None,
+    hard_negative_ratio: float = 0.0,
+    clinical_pair_ratio: float = 0.0,
+    span_category_weights: Optional[Dict[str, float]] = None,
+    oversample_categories: Tuple[str, ...] = (),
+    oversample_factor: int = 1,
+    _pii_docs: Optional[List[Dict[str, Any]]] = None,
+    _natural_docs: Optional[List[Dict[str, Any]]] = None,
+    _allow_download: bool = True,
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
     """
     Returns (train_records, val_records, stats).
     For num_pii_docs PII documents the corpus contains:
-      num_pii_docs positives + num_pii_docs contrastive negatives + num_pii_docs*natural_negative_ratio natural negatives.
+      num_pii_docs positives + num_pii_docs contrastive negatives + num_pii_docs*natural_negative_ratio natural negatives
+      + num_pii_docs*hard_negative_ratio clinical hard negatives (PubMed unlabeled, WikiDoc, synthetic clean notes)
+      + num_pii_docs*clinical_pair_ratio synthetic clinical notes with PHI, each with its natural clean twin.
+
+    span_category_weights: {"AGE": 3.0, ...} multiplies the span-head loss on tokens of spans of that category.
+    oversample_categories / oversample_factor: training positives that contain one of these categories (and their
+      clean twins, to keep the classes balanced) are repeated oversample_factor times in the TRAIN split only.
+    _pii_docs / _natural_docs / _allow_download: inject already-loaded documents and stay offline (tests, re-runs).
     """
     rng = random.Random(seed)
     token = hf_token or os.environ.get("HF_TOKEN")
+    weights = {k.upper(): float(v) for k, v in (span_category_weights or {}).items()}
+    over = {c.upper() for c in oversample_categories}
 
-    n_nemo = int(num_pii_docs * nemotron_fraction)
-    nemo = load_nemotron_docs(n_nemo, token)
-    gretel = load_gretel_docs(num_pii_docs - len(nemo), token)
-    pii_docs = nemo + gretel
-    if not pii_docs:
+    if _pii_docs is not None:
+        nemo = [d for d in _pii_docs if d.get("source") == "nemotron"]
+        gretel = [d for d in _pii_docs if d.get("source") != "nemotron"]
+    else:
+        n_nemo = int(num_pii_docs * nemotron_fraction)
+        nemo = load_nemotron_docs(n_nemo, token)
+        gretel = load_gretel_docs(num_pii_docs - len(nemo), token)
+    real_pii = nemo + gretel
+    if not real_pii:
         raise RuntimeError("No PII documents could be loaded (Nemotron-PII and Gretel both unavailable). "
                            "Check network access and HF_TOKEN.")
-    natural = load_natural_negatives(int(len(pii_docs) * natural_negative_ratio), token)
+    clinical = load_clinical_pairs(int(round(len(real_pii) * clinical_pair_ratio)), seed=seed + 2027,
+                                   max_chars=max_chars) if clinical_pair_ratio > 0 else []
+    pii_docs = real_pii + clinical
+    natural = (_natural_docs if _natural_docs is not None
+               else load_natural_negatives(int(len(real_pii) * natural_negative_ratio), token))
+    hard = load_hard_negatives(int(round(len(real_pii) * hard_negative_ratio)), token, seed=seed + 2028,
+                               max_chars=max_chars, allow_download=_allow_download) if hard_negative_ratio > 0 else []
 
     rng.shuffle(pii_docs)
     rng.shuffle(natural)
+    rng.shuffle(hard)
     n_val_pii = max(1, int(len(pii_docs) * val_fraction))
     n_val_nat = max(1, int(len(natural) * val_fraction)) if natural else 0
+    n_val_hard = max(1, int(len(hard) * val_fraction)) if hard else 0
+
+    def span_weights(spans) -> Optional[List[float]]:
+        if not weights:
+            return None
+        return [weights.get(_span_category(lab), 1.0) for _, _, lab in spans]
 
     def expand(docs, split_name):
         recs = []
@@ -257,42 +374,71 @@ def load_contrastive_corpus(
             text, spans = truncate_with_spans(d["text"], d["spans"], max_chars)
             if not spans:
                 continue
-            recs.append(make_record(f"{split_name}_{d['source']}_{i:05d}_pos", text, spans, True,
-                                    d["source"], "positive"))
-            twin = replace_spans_with_generic(text, spans)[:max_chars]
-            recs.append(make_record(f"{split_name}_{d['source']}_{i:05d}_neg", twin, [], False,
-                                    d["source"], "contrastive_negative"))
+            twin = d.get("twin") if d.get("twin") and len(d["text"]) <= max_chars else None
+            twin = (twin or replace_spans_with_generic(text, spans))[:max_chars]
+            copies = 1
+            if split_name == "train" and over and oversample_factor > 1 and \
+                    any(_span_category(lab) in over for _, _, lab in spans):
+                copies = oversample_factor
+            for c in range(copies):
+                sfx = "" if c == 0 else f"_dup{c}"
+                recs.append(make_record(f"{split_name}_{d['source']}_{i:05d}_pos{sfx}", text, spans, True,
+                                        d["source"], "positive" if c == 0 else "positive_oversampled",
+                                        span_weights(spans)))
+                recs.append(make_record(f"{split_name}_{d['source']}_{i:05d}_neg{sfx}", twin, [], False,
+                                        d["source"], "contrastive_negative",
+                                        [] if weights else None))
         return recs
 
-    def expand_natural(docs, split_name):
+    def expand_clean(docs, split_name, kind):
         recs = []
         for i, d in enumerate(docs):
             text = d["text"][:max_chars]
-            recs.append(make_record(f"{split_name}_{d['source']}_{i:05d}_nat", text, [], False,
-                                    d["source"], "natural_negative"))
+            recs.append(make_record(f"{split_name}_{d['source']}_{i:05d}_{kind[:4]}", text, [], False,
+                                    d["source"], kind, [] if weights else None))
         return recs
 
-    val = expand(pii_docs[:n_val_pii], "val") + expand_natural(natural[:n_val_nat], "val")
-    train = expand(pii_docs[n_val_pii:], "train") + expand_natural(natural[n_val_nat:], "train")
+    val = (expand(pii_docs[:n_val_pii], "val") + expand_clean(natural[:n_val_nat], "val", "natural_negative")
+           + expand_clean(hard[:n_val_hard], "val", "hard_negative"))
+    train = (expand(pii_docs[n_val_pii:], "train") + expand_clean(natural[n_val_nat:], "train", "natural_negative")
+             + expand_clean(hard[n_val_hard:], "train", "hard_negative"))
     rng.shuffle(train)
     rng.shuffle(val)
 
     def count(recs, key, value):
         return sum(1 for r in recs if r["metadata"].get(key) == value)
 
+    def sources(docs):
+        return {s: sum(1 for d in docs if d["source"] == s) for s in sorted({d["source"] for d in docs})}
+
+    span_cats: Dict[str, int] = {}
+    for d in pii_docs[n_val_pii:]:
+        for _, _, lab in d["spans"]:
+            c = _span_category(lab)
+            span_cats[c] = span_cats.get(c, 0) + 1
+
     stats = {
-        "recipe": "contrastive (real PII docs + generic-replaced twins + natural clean text)",
+        "recipe": "contrastive (real PII docs + generic-replaced twins + natural clean text"
+                  + (" + clinical hard negatives" if hard else "")
+                  + (" + synthetic clinical PHI/clean pairs" if clinical else "") + ")",
         "pii_docs_nemotron": len(nemo),
         "pii_docs_gretel": len(gretel),
+        "clinical_pair_docs": len(clinical),
         "natural_negative_docs": len(natural),
-        "natural_negative_sources": {s: sum(1 for d in natural if d["source"] == s)
-                                     for s in sorted({d["source"] for d in natural})},
+        "natural_negative_sources": sources(natural),
+        "hard_negative_docs": len(hard),
+        "hard_negative_sources": sources(hard),
+        "span_category_weights": weights,
+        "oversample": {"categories": sorted(over), "factor": oversample_factor,
+                       "train_records_added": count(train, "kind", "positive_oversampled") * 2},
+        "train_gold_spans_by_category": dict(sorted(span_cats.items(), key=lambda kv: -kv[1])),
         "train_records": len(train),
         "val_records": len(val),
         "train_positives": count(train, "is_phi", True),
         "train_negatives": count(train, "is_phi", False),
         "val_positives": count(val, "is_phi", True),
         "val_negatives": count(val, "is_phi", False),
-        "held_out_for_evaluation": "ai4privacy/pii-masking-openpii-1m (not used in training)",
+        "held_out_for_evaluation": "ai4privacy/pii-masking-openpii-1m, PubMedQA pqa_labeled, generator seed 1337, "
+                                   "n2c2 2014 (none used in training)",
     }
     return train, val, stats

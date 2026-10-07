@@ -37,6 +37,17 @@ def _bool(v: str) -> bool:
     return str(v).strip().lower() in ("1", "true", "yes", "on")
 
 
+def _validator_kinds(v: Optional[str]) -> Tuple[str, ...]:
+    """'all' (default) / 'none' / comma list. Unknown names are kept so validate() can report them."""
+    from redactx.production.validators import KINDS
+    s = (v or "all").strip().lower()
+    if s in ("all", "1", "true", "yes", "on"):
+        return KINDS
+    if s in ("none", "0", "false", "no", "off"):
+        return ()
+    return tuple(k.strip() for k in s.split(",") if k.strip())
+
+
 @dataclass
 class Settings:
     model_dir: Optional[str] = None
@@ -63,6 +74,9 @@ class Settings:
     batch_size: int = 8
     hipaa_only: bool = False
     return_finding_text: bool = False
+    validators: Tuple[str, ...] = ("ssn", "email", "phone", "mrn", "npi")
+    mrn_checksum: Optional[str] = None
+    mrn_min_digits: int = 5
     warnings: List[str] = field(default_factory=list)
 
     @classmethod
@@ -101,6 +115,9 @@ class Settings:
             batch_size=int(g("BATCH_SIZE", 8)),
             hipaa_only=_bool(g("HIPAA_ONLY", "0")),
             return_finding_text=_bool(g("RETURN_FINDING_TEXT", "0")),
+            validators=_validator_kinds(g("VALIDATORS", "all")),
+            mrn_checksum=((g("MRN_CHECKSUM", "") or "").strip().lower() or None),
+            mrn_min_digits=int(g("MRN_MIN_DIGITS", 5)),
         )
         s.validate()
         return s
@@ -148,6 +165,14 @@ class Settings:
             errors.append("REDACTX_PRESIDIO_SCORE must be in [0, 1]")
         if "*" in self.cors_origins:
             errors.append("REDACTX_CORS_ORIGINS must list explicit origins ('*' is not allowed)")
+        from redactx.production.validators import KINDS
+        bad_kinds = sorted(set(self.validators) - set(KINDS))
+        if bad_kinds:
+            errors.append(f"REDACTX_VALIDATORS has unknown kinds {bad_kinds}; use 'all', 'none' or a list of {KINDS}")
+        if self.mrn_checksum not in (None, "none", "luhn", "mod11"):
+            errors.append("REDACTX_MRN_CHECKSUM must be one of: none, luhn, mod11")
+        if self.mrn_min_digits < 1:
+            errors.append("REDACTX_MRN_MIN_DIGITS must be >= 1")
         if errors:
             raise ValueError("Invalid RedactX settings:\n  - " + "\n  - ".join(errors))
         if self.allow_no_auth:

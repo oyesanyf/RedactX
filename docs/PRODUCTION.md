@@ -123,6 +123,9 @@ See [`.env.example`](../.env.example).
 | `REDACTX_HIPAA_ONLY` | `0` | Redact only the 18 Safe Harbor identifier categories. |
 | `REDACTX_RETURN_FINDING_TEXT` | `0` | Include original PHI values in findings. Leave off in production. |
 | `REDACTX_PRESIDIO_SCORE` | `0.35` | Presidio minimum score. |
+| `REDACTX_VALIDATORS` | `all` | Verified structured-ID validators inside the RedactX detector: `all`, `none`, or a list of `ssn,email,phone,mrn,npi`. They add or confirm spans (validator category wins), never remove them. |
+| `REDACTX_MRN_CHECKSUM` | none | `luhn` or `mod11` if your facility's MRNs carry a check digit (rejects keyword-matched IDs that fail it). |
+| `REDACTX_MRN_MIN_DIGITS` | `5` | Minimum digits for an ID after an MRN keyword. |
 | `REDACTX_API_KEY_HASHES` | — | Comma-separated SHA-256 hex digests (`redactx hash-key`). |
 | `REDACTX_ALLOW_NO_AUTH` | `0` | Disable auth (local development only; logs a warning). |
 | `REDACTX_CORS_ORIGINS` | — | Explicit origins; `*` is rejected. |
@@ -258,6 +261,49 @@ python validate_model.py --model-dir ./models/RedactX-v2
 
 Character-level metrics ignore whitespace and are boundary-tolerant, which is what matters for redaction and is
 the only fair way to score a union of detectors.
+
+### n2c2 2014 (real clinical notes)
+
+```powershell
+python benchmark_n2c2.py --model-dir ./models/RedactX-v3 --n2c2-dir D:\data\n2c2-2014
+python benchmark_n2c2.py --n2c2-dir D:\data\n2c2-2014 --skip-redactx    # Presidio + validators only, no GPU
+```
+
+- **Data.** The n2c2 2014 de-identification corpus needs a Data Use Agreement from the
+  [DBMI Data Portal](https://portal.dbmi.hms.harvard.edu). Nothing is downloaded: unpack the release and point
+  `--n2c2-dir` at it. The loader finds `training-PHI-Gold-Set1/2` and `testing-PHI-Gold-fixed` (or
+  `testing-PHI-Gold`) anywhere below that folder.
+- **Offsets.** Every tag's offsets are checked against its `text` attribute. A tag whose offsets are off is
+  re-located near the stated position or dropped, and the counts are printed (`exact`, `relocated`, `dropped`).
+- **Systems.** All are run live on the same notes:
+  - `redactx`: the model alone.
+  - `redactx+validators`: the production default.
+  - `validators`: the validators alone.
+  - `presidio`.
+  - `hybrid`: `redactx+validators` ∪ Presidio.
+- **Metrics:**
+  - Character P/R/F1 against all n2c2 PHI.
+  - **HIPAA recall**, restricted to Safe Harbor identifiers. Doctor names, hospitals, professions and states are
+    n2c2 PHI but not Safe Harbor identifiers of the patient; ages count only when > 89.
+  - Recall per HIPAA category and per n2c2 type (PATIENT, DOCTOR, MEDICALRECORD, ...).
+  - Window recall and specificity: how often PHI-free 600-character windows of real notes are flagged.
+- **Splits.** The default split is `test`. Calibration uses only `train` (below), so the two never overlap.
+  Output goes to `<model-dir>/n2c2_results.json`.
+
+### Calibrating on n2c2
+
+```powershell
+python calibrate_thresholds.py --model-dir ./models/RedactX-v3 --sources ai4privacy,pubmed,generator,n2c2 `
+  --n2c2-dir D:\data\n2c2-2014 --n-n2c2 300
+```
+
+- **What gets added.** `n2c2` is its own calibration source, built from TRAIN-split notes cut into windows:
+  - Positives: windows that contain gold PHI.
+  - Negatives: their generic-replaced twins plus PHI-free windows.
+- **Per-source rule.** Because calibration is per source, real clinical notes must meet the target recall on
+  their own; an easier source cannot hide them.
+- **Label policy.** n2c2 does not label gender, while the ai4privacy-trained model may. The PHI-free n2c2 windows
+  therefore measure specificity under the n2c2 policy.
 
 ---
 

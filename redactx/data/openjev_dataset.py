@@ -216,9 +216,10 @@ class OpenJevCalibratedDataset(Dataset):
 
         # Contrastive records carry raw text + PII char spans -> build prompt with offsets and span labels.
         if "text" in item and "pii_spans" in item:
-            from redactx.data.prompting import build_noul_prompt, token_span_labels
+            from redactx.data.prompting import build_noul_prompt, token_span_labels, token_span_weights
             text = item["text"]
             spans = [tuple(s) for s in item["pii_spans"]]
+            span_w = list(item.get("pii_span_weights") or [1.0] * len(spans))
             while True:
                 prompt, raw_index = build_noul_prompt(text)
                 enc = self.tokenizer(prompt, return_offsets_mapping=True, return_tensors="pt")
@@ -227,12 +228,14 @@ class OpenJevCalibratedDataset(Dataset):
                 # Shorten the text (never truncate the prompt: the last token must stay "[VERDICT]:")
                 cut = int(len(text) * 0.8)
                 text = text[:cut]
-                spans = [(s, min(e, cut)) for s, e in spans if s < cut]
+                kept = [((s, min(e, cut)), w) for (s, e), w in zip(spans, span_w) if s < cut]
+                spans = [sp for sp, _ in kept]
+                span_w = [w for _, w in kept]
             offsets = [tuple(o) for o in enc.offset_mapping[0].tolist()]
             labels = token_span_labels(offsets, raw_index, spans)
             input_ids = enc.input_ids.squeeze(0)
             attention_mask = enc.attention_mask.squeeze(0)
-            return {
+            out = {
                 "id": item["id"],
                 "primitive": item["primitive"],
                 "input_ids": input_ids,
@@ -244,6 +247,10 @@ class OpenJevCalibratedDataset(Dataset):
                 "target_dist": torch.tensor(target_dist, dtype=torch.float32),
                 "token_span_labels": torch.tensor(labels, dtype=torch.long),
             }
+            if "pii_span_weights" in item:
+                out["token_span_weights"] = torch.tensor(
+                    token_span_weights(offsets, raw_index, spans, span_w), dtype=torch.float32)
+            return out
 
         prompt = item["prompt"]
         alt_prompt = item.get("alt_prompt", prompt)
@@ -332,5 +339,14 @@ def collate_openjev_batch(batch: List[Dict[str, Any]]) -> Dict[str, Any]:
             if lab is not None:
                 span_labels[i, :lab.size(0)] = lab
         return_batch["token_span_labels"] = span_labels
+    if any("token_span_weights" in item for item in batch):
+        span_weights = torch.zeros((batch_size, max_seq_len), dtype=torch.float32)
+        for i, item in enumerate(batch):
+            w = item.get("token_span_weights")
+            if w is not None:
+                span_weights[i, :w.size(0)] = w
+            elif item.get("token_span_labels") is not None:
+                span_weights[i, :item["token_span_labels"].size(0)] = 1.0
+        return_batch["token_span_weights"] = span_weights
 
     return return_batch

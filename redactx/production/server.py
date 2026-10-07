@@ -78,8 +78,13 @@ class Service:
         if settings.mode in ("hybrid", "redactx"):
             from redactx.models.openjev import OpenJevVaultGemmaEngine
             engine = OpenJevVaultGemmaEngine.from_pretrained(settings.model_dir, device=settings.device)
+            validators = None
+            if settings.validators:
+                from redactx.production.validators import StructuredIdValidator
+                validators = StructuredIdValidator(kinds=settings.validators, mrn_min_digits=settings.mrn_min_digits,
+                                                   mrn_checksum=settings.mrn_checksum)
             rx = RedactXDetector(engine, max_chars=settings.chunk_chars, overlap=settings.chunk_overlap,
-                                 batch_size=settings.batch_size)
+                                 batch_size=settings.batch_size, validators=validators)
             if not rx.has_span_head:
                 logger.warning("Checkpoint has no trained span head: RedactX can flag PHI but cannot localize it; "
                                "flagged documents follow REDACTX_UNLOCALIZED_POLICY=%s", settings.unlocalized_policy)
@@ -110,6 +115,9 @@ class Service:
                          "span_threshold": getattr(rx.engine, "span_threshold", None),
                          "thresholds_calibrated_on": getattr(th, "calibrated_on", None),
                          "chunk_chars": rx.max_chars, "chunk_overlap": rx.overlap})
+            v = getattr(rx, "validators", None)
+            info["validators"] = ({"kinds": list(v.kinds), "phone_backend": v.phone_backend}
+                                  if v is not None else None)
         return info
 
 

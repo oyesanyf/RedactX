@@ -107,6 +107,24 @@ For `--samples N` PII documents the corpus contains **N positives + N contrastiv
 negatives**. The train/validation split is done **per source document**, so a positive and its clean twin never
 straddle the split.
 
+#### v3 additions: specificity on clinical text, AGE / DEMOGRAPHIC recall
+
+v2's held-out specificity on clean clinical text was the weak point, and calibration showed a threshold cannot buy
+it back (raising the doc threshold to 0.974 cost recall on H and P). So the fix is in the training data. These
+are now **on by default** with `--recipe-contrastive`:
+
+| Addition | Flag (default) | What it teaches |
+|---|---|---|
+| **Clinical hard negatives** | `--hard-negative-ratio 0.75` | Dense clinical prose is not PHI. ~40% PubMedQA `pqa_unlabeled` (evaluation uses `pqa_labeled`), ~20% `medalpaca/medical_meadow_wikidoc`, the rest synthetic identifier-free notes (vitals, labs, medications, ICD/CPT/NDC codes) from [`clean_notes.py`](redactx/data/clean_notes.py), which also fill in when the Hub is unreachable |
+| **Synthetic clinical PHI/clean pairs** | `--clinical-pair-ratio 0.25` | Notes with names, ages, demographics, MRNs, phones and dates, each with a *natural* clean twin (*"an adult"*, *"on admission"*) built from the same skeleton |
+| **AGE / DEMOGRAPHIC loss upweighting** | `--span-category-weights AGE=3,DEMOGRAPHIC=3` | The span-head BCE on those tokens is multiplied by the weight |
+| **AGE / DEMOGRAPHIC oversampling** | `--oversample-categories AGE,DEMOGRAPHIC --oversample-factor 2` | Training positives with those categories (and their twins) repeat, in the train split only |
+
+The synthetic notes use names, places, facilities, conditions and templates that are **disjoint** from the
+benchmark generator (set G) and the handwritten set H, and a test enforces it. Clean text never contains ages,
+gender words, ethnicity or dates, so it never contradicts a label on the positive side. Set any ratio to 0, or
+`--span-category-weights ""`, to reproduce the v2 recipe.
+
 ---
 
 ## 🚀 Quickstart
@@ -140,12 +158,12 @@ python train.py --model google/vaultgemma-1b --force-vaultgemma --device cuda `
   --output-dir ./models/RedactX-v2-test --model-name RedactX
 ```
 
-**Full run:**
+**Full run (v3 recipe: hard negatives + clinical pairs + AGE/DEMOGRAPHIC upweighting, all on by default):**
 
 ```powershell
 python train.py --model google/vaultgemma-1b --force-vaultgemma --device cuda `
   --recipe-contrastive --samples 2000 --epochs 3 --batch-size 16 --lr 2e-4 --lambda-span 1.0 `
-  --output-dir ./models/RedactX-v2 --model-name RedactX
+  --output-dir ./models/RedactX-v3 --model-name RedactX
 ```
 
 When training finishes, `train.py` frees the GPU and automatically runs the **held-out benchmark**, printing a
@@ -164,6 +182,10 @@ python validate_model.py --model-dir ./models/RedactX-v2
 | `--recipe-contrastive` | off | Use the contrastive recipe (recommended) |
 | `--samples` | 300 | Number of PII documents (contrastive) / synthetic records (legacy) |
 | `--natural-negative-ratio` | 0.5 | Natural clean docs per PII doc |
+| `--hard-negative-ratio` | 0.75 | Clinical hard negatives per PII doc (PubMed unlabeled, WikiDoc, synthetic clean notes) |
+| `--clinical-pair-ratio` | 0.25 | Synthetic clinical PHI notes (with natural clean twins) per PII doc |
+| `--span-category-weights` | `AGE=3,DEMOGRAPHIC=3` | Span-loss multiplier per HIPAA category (`""` = off) |
+| `--oversample-categories` / `--oversample-factor` | `AGE,DEMOGRAPHIC` / 2 | Repeat training positives containing these categories |
 | `--max-chars` / `--max-length` | 600 / 384 | Max characters of text per record / max prompt tokens |
 | `--lambda-span` | 1.0 with contrastive, else 0 | Weight of the span-head loss (0 disables the span head) |
 | `--span-pos-weight` | 3.0 | BCE weight on PII tokens |
@@ -271,16 +293,20 @@ configuration table, security model, monitoring, runbook, readiness checklist).
 python -m pip install -e ".[production]"; python -m spacy download en_core_web_lg
 
 # 1. pick thresholds for a target recall on held-out data (writes <model-dir>/redactx_thresholds.json)
-python calibrate_thresholds.py --model-dir ./models/RedactX-v2 --target-recall 0.98
+python calibrate_thresholds.py --model-dir ./models/RedactX-v3 --target-recall 0.98
+#    ...or include real clinical notes as their own calibration source (n2c2 2014 TRAIN split, DUA corpus)
+python calibrate_thresholds.py --model-dir ./models/RedactX-v3 --sources ai4privacy,pubmed,generator,n2c2 --n2c2-dir D:\data\n2c2-2014
 
 # 2. benchmark: doc + span metrics, RedactX vs Presidio vs hybrid, long documents, per-HIPAA-category recall
-python validate_model.py --model-dir ./models/RedactX-v2
+python validate_model.py --model-dir ./models/RedactX-v3
+#    ...and on real clinical notes: n2c2 2014 TEST split, RedactX vs Presidio vs hybrid, per HIPAA category / n2c2 type
+python benchmark_n2c2.py --model-dir ./models/RedactX-v3 --n2c2-dir D:\data\n2c2-2014
 
 # 3. serve (see .env.example for every setting)
-redactx serve --model-dir ./models/RedactX-v2 --mode hybrid
+redactx serve --model-dir ./models/RedactX-v3 --mode hybrid
 
 # batch-redact files / folders / stdin; the JSONL report has counts and offsets, never PHI values
-redactx redact notes/ --out-dir redacted/ --report report.jsonl --model-dir ./models/RedactX-v2
+redactx redact notes/ --out-dir redacted/ --report report.jsonl --model-dir ./models/RedactX-v3
 
 # measure throughput and p50/p95/p99 against a running server
 python loadtest.py --url http://127.0.0.1:8080 --api-key <key> --concurrency 8 --requests 400
@@ -290,6 +316,7 @@ python loadtest.py --url http://127.0.0.1:8080 --api-key <key> --concurrency 8 -
 |---|---|
 | Long documents | Overlapping 600/150-char windows, batched, spans stitched back to document offsets |
 | Recall over a single model | `hybrid` mode: union of RedactX and Presidio findings |
+| Structured identifiers | Verified validators inside the RedactX detector: SSN (SSA issuance rules), e-mail (RFC 5321 structure), phone (libphonenumber + NANP rules, FAX by keyword), MRN (keyword + min digits, optional Luhn / mod-11), NPI (keyword + CMS check digit). Bare digit runs need a keyword. They only add or confirm spans, never remove them (`REDACTX_VALIDATORS`) |
 | Thresholds | Calibrated for a target recall, stored with the checkpoint, reported by `/v2/info` |
 | HIPAA | Findings mapped to the 18 Safe Harbor categories; `REDACTX_HIPAA_ONLY`; per-category recall in the benchmark |
 | Fail-closed | Detector errors → 503, never raw text; detected-but-unlocalized PHI → whole-document redaction or human review |
@@ -460,6 +487,7 @@ RedactX/
 ├── train.py                      # training entry point (+ automatic held-out benchmark)
 ├── validate_model.py             # held-out benchmark: H/G/P/Q/L sets, RedactX vs Presidio vs hybrid, per category
 ├── calibrate_thresholds.py       # doc/span thresholds for a target recall -> redactx_thresholds.json
+├── benchmark_n2c2.py             # n2c2 2014 benchmark: RedactX vs Presidio vs hybrid, per HIPAA category / type
 ├── calibrate_temperature.py      # temperature scaling on held-out data
 ├── loadtest.py                   # concurrent load test against a running server
 ├── predict.py                    # quick CLI inference
@@ -469,7 +497,8 @@ RedactX/
 │   ├── cli.py                    # redactx serve | redact | hash-key | serve-legacy | scan | generate
 │   ├── production/
 │   │   ├── chunking.py           # overlapping windows for long documents
-│   │   ├── detectors.py          # RedactXDetector, PresidioDetector, HybridDetector
+│   │   ├── detectors.py          # RedactXDetector (+ validators), PresidioDetector, HybridDetector
+│   │   ├── validators.py         # verified SSN / e-mail / phone / MRN / NPI detection (checksums + keywords)
 │   │   ├── hipaa.py              # HIPAA Safe Harbor categories + label mapping
 │   │   ├── redactor.py           # strategies + fail-closed policy
 │   │   ├── thresholds.py         # ThresholdConfig, Wilson lower-bound threshold selection
@@ -477,9 +506,11 @@ RedactX/
 │   │   ├── metrics.py            # Prometheus metrics
 │   │   └── server.py             # hardened FastAPI app
 │   ├── data/
-│   │   ├── prompting.py          # shared prompt builder + raw-offset map + span labels
-│   │   ├── contrastive_corpus.py # v2 contrastive recipe
-│   │   ├── openjev_dataset.py    # tokenized dataset + collation (span labels padded with -100)
+│   │   ├── prompting.py          # shared prompt builder + raw-offset map + span labels / weights
+│   │   ├── contrastive_corpus.py # contrastive recipe (v2) + hard negatives, clinical pairs, upweighting (v3)
+│   │   ├── clean_notes.py        # synthetic clinical PHI/clean pairs + identifier-free clinical notes
+│   │   ├── n2c2.py               # n2c2 2014 loader (offset-verified) + HIPAA mapping
+│   │   ├── openjev_dataset.py    # tokenized dataset + collation (span labels padded with -100, weights)
 │   │   ├── benchmark_loaders.py  # legacy recipes
 │   │   └── generator.py          # synthetic clinical notes (used for benchmark set G)
 │   ├── models/
@@ -508,7 +539,9 @@ python -m pytest tests -q
 - **Length:** the model sees at most `--max-chars` (600 by default) per forward pass. The production detector and
   server chunk longer documents into overlapping windows; `engine.evaluate_text` alone does not.
 - **Span categories are heuristic** (see note above); Presidio supplies typed categories in hybrid mode.
-- **No clinical evaluation yet:** the held-out sets are general PII and synthetic notes, not real clinical notes.
+- **No measured clinical evaluation yet:** the published held-out sets are general PII and synthetic notes.
+  `benchmark_n2c2.py` evaluates on real clinical notes (n2c2 2014), but the corpus requires a Data Use Agreement,
+  so no n2c2 numbers are published until a run on the real corpus is reported.
 - **Training-time validation metrics are in-distribution.** Trust `validate_model.py` (held-out) over `scores.json`.
 - **Dataset licenses:** check each dataset's license on Hugging Face before using trained weights commercially.
 - **Model weights are not stored in this repository** (GitHub size limits); `/models/` is git-ignored.
@@ -524,7 +557,10 @@ python -m pytest tests -q
 - [x] Hybrid RedactX ∪ Presidio mode, recall-targeted thresholds, per-HIPAA-category recall
 - [x] Hardened API server, batch CLI, Docker image, load tester
 - [x] **Publish v2 benchmark results**
-- [ ] Calibrate v2 thresholds and re-benchmark at the calibrated operating point
-- [ ] Evaluate on a clinical de-identification corpus (n2c2 2014)
+- [x] Calibrate v2 thresholds (Wilson lower bound, per source) and re-benchmark at the calibrated operating point
+- [x] v3 recipe: clinical hard negatives, synthetic clinical PHI/clean pairs, AGE / DEMOGRAPHIC upweighting
+- [x] Verified structured-ID validators (SSN, e-mail, phone, MRN, NPI) inside the RedactX detector
+- [x] n2c2 2014 benchmark + n2c2 calibration source (code; needs the DUA corpus locally)
+- [ ] Train v3 and publish its held-out and n2c2 results
 - [ ] Learned entity-type classification for spans
 - [ ] Publish weights to Hugging Face with a model card containing only measured results

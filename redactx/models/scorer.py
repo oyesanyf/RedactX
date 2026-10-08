@@ -42,10 +42,20 @@ class RedactXPointerScorer(nn.Module):
 
 class PlattTemperatureScaler(nn.Module):
     """
-    Post-hoc temperature scaling calibrator (Platt scaling for modern deep networks).
-    Scales logits by a learned positive scalar temperature T:
-        p_i = softmax(z_i / T)
-    Ensures model probabilities reflect true empirical empirical error rates.
+    Post-hoc temperature scaling calibrator (Platt scaling for modern deep neural networks).
+
+    Mathematical Formulation:
+        Given uncalibrated logits z_i \\in \\mathbb{R}^K for sample i, Platt temperature
+        scaling applies a single scalar parameter T > 0:
+
+        \\hat{p}_{i,k} = \\frac{\\exp(z_{i,k} / T)}{\\sum_{j=1}^K \\exp(z_{i,j} / T)}
+
+        The parameter T is optimized on a held-out validation set to minimize negative log-likelihood (NLL):
+
+        T^* = \\arg\\min_{T > 0} \\; -\\frac{1}{N} \\sum_{i=1}^N \\sum_{k=1}^K y_{i,k} \\log \\hat{p}_{i,k}(T)
+
+        Because T does not change the argmax ordering of logits (monotonic transformation),
+        temperature scaling preserves accuracy and AUROC while minimizing Expected Calibration Error (ECE).
     """
 
     def __init__(self, initial_temperature: float = 1.0):

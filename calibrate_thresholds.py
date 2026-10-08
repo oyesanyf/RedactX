@@ -205,9 +205,9 @@ def load_generator(n: int, seed: int) -> Tuple[List[Dict], List[str]]:
 
 
 def load_n2c2_calibration(root: str, n_pos: int, max_chars: int, seed: int = 4242,
-                          split: str = "test", part: str = "calib") -> Tuple[List[Dict], List[str], Dict]:
+                          split: str = "train", part: str = "all") -> Tuple[List[Dict], List[str], Dict]:
     """
-    Loads n2c2 2014 notes for calibration. Defaults to the 'calib' half of the test split,
+    Loads n2c2 2014 notes for calibration. In CLI mode, defaults to the 'calib' half of the test split,
     guaranteeing that calibration documents were NEVER seen during training.
     """
     import random

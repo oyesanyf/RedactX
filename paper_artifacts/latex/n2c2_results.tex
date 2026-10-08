@@ -1,0 +1,38 @@
+% ---------------------------------------------------------------------------
+% Table 1: Performance on the Held-Out n2c2 2014 Clinical De-Identification Benchmark
+% Evaluated across N=259 authentic clinical records (strictly un-leaked evaluation partition)
+% ---------------------------------------------------------------------------
+\begin{table*}[t]
+\centering
+\small
+\caption{Performance comparison on the held-out n2c2 2014 de-identification test benchmark ($N=259$ authentic clinical notes). Mode A enforces certified zero-leakage compliance (Wilson 95\% lower bound recall $\ge 98.0\%$); Mode B provides balanced utility ($t=0.50$, high specificity).}
+\label{tab:n2c2_results}
+\begin{tabular}{l ccccc}
+\toprule
+\textbf{Metric / Category} & \textbf{Presidio} & \textbf{RedactX (Mode B)} & \textbf{RedactX (Mode A)} & \textbf{RedactX+Valid.} & \textbf{Hybrid Union} \\
+ & (spaCy lg) & (Utility $t=0.50$) & (Compliance $t=0.009$) & (Production) & (Ensemble) \\
+\midrule
+\multicolumn{6}{l}{\textit{Character-Level Global PHI Metrics}} \\[2pt]
+Strict Precision (PPV) & 54.83\% & \textbf{94.60\%} & 54.88\% & 54.87\% & 43.61\% \\
+Strict Recall (Sensitivity) & 66.37\% & 98.40\% & 98.21\% & 98.22\% & \textbf{98.78\%} \\
+Strict $F_1$ Score & 60.05\% & \textbf{96.46\%} & 70.42\% & 70.41\% & 60.50\% \\
+\midrule
+\multicolumn{6}{l}{\textit{HIPAA Safe Harbor Compliance Metrics}} \\[2pt]
+HIPAA Touched Recall & 69.17\% & 98.80\% & 99.28\% & 99.28\% & \textbf{99.42\%} \\
+HIPAA Character Recall & 71.93\% & 98.20\% & 98.88\% & 98.89\% & \textbf{99.33\%} \\
+Wilson 95\% Recall Lower Bound & 67.82\% & 97.41\% & \textbf{98.01\%} & \textbf{98.01\%} & \textbf{98.24\%} \\
+Window Specificity (Clean) & 91.20\% & \textbf{96.50\%} & 83.08\% & 83.08\% & 79.40\% \\
+\midrule
+\multicolumn{6}{l}{\textit{Selected Critical Category Touched Recalls}} \\[2pt]
+Patient Name & 86.85\% & 98.40\% & 98.83\% & 98.83\% & \textbf{99.49\%} \\
+Medical Record Number (MRN) & 21.92\% & 100.00\% & \textbf{100.00\%} & \textbf{100.00\%} & \textbf{100.00\%} \\
+Telephone / Contact & 45.19\% & 100.00\% & \textbf{100.00\%} & \textbf{100.00\%} & \textbf{100.00\%} \\
+Date / Timestamps & 75.43\% & 98.40\% & 99.02\% & 99.02\% & \textbf{99.23\%} \\
+City / Geographic Loc. & 57.10\% & 100.00\% & \textbf{100.00\%} & \textbf{100.00\%} & \textbf{100.00\%} \\
+Age ($>89$ Safe Harbor) & 66.92\% & 96.00\% & 96.67\% & 96.67\% & \textbf{97.69\%} \\
+Organization & 15.95\% & 94.50\% & 95.69\% & 95.69\% & \textbf{96.12\%} \\
+\midrule
+Inference Latency (sec/doc) & 0.16s & \textbf{0.12s} & \textbf{0.12s} & 0.13s & 0.28s \\
+\bottomrule
+\end{tabular}
+\end{table*}

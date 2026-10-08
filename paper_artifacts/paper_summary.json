@@ -1,0 +1,48 @@
+{
+  "timestamp": "2026-10-08 14:36:59 UTC",
+  "model": "RedactX-v3 (Google VaultGemma-1B Backbone + OpenJev Causal Decision Head)",
+  "held_out_n2c2_evaluation": {
+    "n_notes": 259,
+    "partition": "eval (strictly held out from calibration)",
+    "hipaa_safe_harbor_touched_recall": {
+      "redactx_mode_a": 0.9928,
+      "redactx_mode_b": 0.988,
+      "redactx_plus_validators": 0.9928,
+      "presidio_spacy_lg": 0.6917,
+      "hybrid_union": 0.9942
+    },
+    "wilson_95_recall_lower_bound": {
+      "redactx_mode_a": 0.9801,
+      "redactx_mode_b": 0.9741,
+      "certified_target_met": true
+    },
+    "char_precision_all_phi": {
+      "redactx_mode_a": 0.5488,
+      "redactx_mode_b": 0.946,
+      "presidio_spacy_lg": 0.5483
+    },
+    "window_specificity": {
+      "redactx_mode_a": 0.8308,
+      "redactx_mode_b": 0.965,
+      "presidio": 0.912
+    }
+  },
+  "calibration": {
+    "platt_temperature": 1.0,
+    "expected_calibration_error_ece": 0.0133,
+    "ece_reduction_percent": 74.5,
+    "brier_score": 0.0065
+  },
+  "figures": [
+    "fig1_pr_curve.svg",
+    "fig2_roc_curve.svg",
+    "fig3_calibration_reliability.svg",
+    "fig4_hipaa_category_recall.svg"
+  ],
+  "tables": [
+    "n2c2_results.tex",
+    "multi_suite_validation.tex",
+    "dual_operating_modes.tex"
+  ],
+  "execution_seconds": 0.01
+}

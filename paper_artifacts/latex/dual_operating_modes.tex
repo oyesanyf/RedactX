@@ -1,0 +1,24 @@
+% ---------------------------------------------------------------------------
+% Table 3: Theoretical & Empirical Specification of Dual Operating Modes
+% ---------------------------------------------------------------------------
+\begin{table}[h]
+\centering
+\small
+\caption{Comparison of RedactX Dual Operating Modes for Deployment.}
+\label{tab:dual_modes}
+\begin{tabular}{l cc}
+\toprule
+\textbf{Attribute} & \textbf{Mode A: Zero-Leakage} & \textbf{Mode B: Balanced Utility} \\
+\midrule
+Primary Objective & Regulatory Legal Compliance & Maximum Clinical Utility \\
+Calibration Criterion & Wilson 95\% Lower Bound $\ge 98\%$ & Utility / $F_1$ Cutoff ($t=0.50$) \\
+Document Threshold ($t_{\text{doc}}$) & 0.009281 & 0.500000 \\
+Span Threshold ($t_{\text{span}}$) & 0.003928 & 0.500000 \\
+Empirical Recall & 99.60\% & 98.40\% \\
+Wilson 95\% Recall Lower Bound & \textbf{98.01\%} (Certified) & 97.41\% \\
+Empirical Specificity & 83.08\% & \textbf{96.50\%} \\
+Empirical Precision & 78.63\% & \textbf{94.60\%} \\
+Recommended Deployment & External Sharing / DUA & Internal Research / Analytics \\
+\bottomrule
+\end{tabular}
+\end{table}

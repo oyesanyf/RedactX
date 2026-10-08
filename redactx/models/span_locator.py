@@ -40,15 +40,23 @@ class TokenSpanLocator(nn.Module):
 
     @staticmethod
     def infer_category(span_text: str) -> str:
-        """Heuristic category tagger for detected PHI spans."""
-        text = span_text.strip()
-        if re.search(r"\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\d|3[01])[/-](19|20)?\d{2}\b", text):
+        """
+        Heuristic category tagger for detected PHI spans.
+        Normalizes adversarial zero-width characters (ZWSP, ZWNJ, ZWJ, BOM)
+        and non-breaking spaces prior to pattern matching.
+        """
+        cleaned = re.sub(r"[\u200b-\u200d\ufeff]", "", span_text)
+        cleaned = cleaned.replace("\u00a0", " ").strip()
+        if not cleaned:
+            return "NAME"
+
+        if re.search(r"\b\d{4}[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b|\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\d|3[01])[/-](19|20)?\d{2}\b", cleaned):
             return "DATE"
-        if re.search(r"\b\d{3}[-.]?\d{2}[-.]?\d{4}\b", text) or "MRN" in text.upper():
+        if re.search(r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b", cleaned) or "MRN" in cleaned.upper() or re.search(r"\b\d{6,10}\b", cleaned):
             return "IDENTIFIER"
-        if re.search(r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}", text) or "@" in text:
+        if re.search(r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}", cleaned) or "@" in cleaned:
             return "CONTACT"
-        if any(w in text.lower() for w in ["hospital", "clinic", "center", "pavilion", "street", "avenue", "terrace", "drive"]):
+        if any(w in cleaned.lower() for w in ["hospital", "clinic", "center", "pavilion", "street", "avenue", "terrace", "drive"]):
             return "LOCATION"
         return "NAME"
 
@@ -83,8 +91,8 @@ class TokenSpanLocator(nn.Module):
             if t_start < context_offset or t_end > context_end:
                 if in_span:
                     # Flush span
-                    s_text = full_prompt[span_start:span_end].strip()
-                    if s_text and len(s_text) > 1:
+                    s_text = full_prompt[span_start:span_end].strip(" \t\n\r\u200b\u200c\u200d\ufeff")
+                    if s_text and (len(s_text) > 1 or s_text.isalnum()):
                         avg_conf = sum(confidences) / max(len(confidences), 1)
                         spans.append(DetectedSpan(
                             text=s_text,
@@ -109,8 +117,8 @@ class TokenSpanLocator(nn.Module):
                     confidences.append(prob)
             else:
                 if in_span:
-                    s_text = full_prompt[span_start:span_end].strip()
-                    if s_text and len(s_text) > 1:
+                    s_text = full_prompt[span_start:span_end].strip(" \t\n\r\u200b\u200c\u200d\ufeff")
+                    if s_text and (len(s_text) > 1 or s_text.isalnum()):
                         avg_conf = sum(confidences) / max(len(confidences), 1)
                         spans.append(DetectedSpan(
                             text=s_text,
@@ -123,8 +131,8 @@ class TokenSpanLocator(nn.Module):
                     confidences = []
 
         if in_span:
-            s_text = full_prompt[span_start:span_end].strip()
-            if s_text and len(s_text) > 1:
+            s_text = full_prompt[span_start:span_end].strip(" \t\n\r\u200b\u200c\u200d\ufeff")
+            if s_text and (len(s_text) > 1 or s_text.isalnum()):
                 avg_conf = sum(confidences) / max(len(confidences), 1)
                 spans.append(DetectedSpan(
                     text=s_text,
@@ -159,11 +167,11 @@ class TokenSpanLocator(nn.Module):
             if cur_start < 0:
                 return
             s, e = cur_start, cur_end
-            while s < e and raw_text[s].isspace():
+            while s < e and (raw_text[s].isspace() or raw_text[s] in "\u200b\u200c\u200d\ufeff"):
                 s += 1
-            while e > s and raw_text[e - 1].isspace():
+            while e > s and (raw_text[e - 1].isspace() or raw_text[e - 1] in "\u200b\u200c\u200d\ufeff"):
                 e -= 1
-            if e - s > 1:
+            if (e - s > 1) or (e - s == 1 and raw_text[s].isalnum()):
                 seg = raw_text[s:e]
                 spans.append(DetectedSpan(
                     text=seg, start=s, end=e,
@@ -179,7 +187,13 @@ class TokenSpanLocator(nn.Module):
             if cur_start < 0:
                 cur_start, cur_end, confs = rs, re_, [prob]
             else:
-                cur_end = max(cur_end, re_)
-                confs.append(prob)
+                # If there is a substantial gap containing alphanumeric words, do not merge across words
+                if rs > cur_end and any(c.isalnum() for c in raw_text[cur_end:rs]):
+                    flush()
+                    cur_start, cur_end, confs = rs, re_, [prob]
+                else:
+                    cur_end = max(cur_end, re_)
+                    confs.append(prob)
         flush()
         return spans
+

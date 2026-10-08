@@ -179,6 +179,16 @@ class OpenJevVaultGemmaEngine(nn.Module):
         self.to(self.device)
         self.model.eval()
 
+    def set_operating_mode(self, mode: str) -> None:
+        """
+        Switches the operational profile between Mode A ('zero_leakage') and Mode B ('balanced_utility').
+        Updates doc_threshold and span_threshold on the engine.
+        """
+        self.thresholds.set_operating_mode(mode)
+        self.doc_threshold = float(self.thresholds.doc_threshold)
+        self.span_threshold = float(self.thresholds.span_threshold)
+
+
     def extract_terminal_logits(self, input_ids: torch.Tensor, attention_mask: torch.Tensor) -> torch.Tensor:
         """
         Runs single-pass forward pass and extracts vocabulary logits at the final prompt token.
@@ -226,7 +236,22 @@ class OpenJevVaultGemmaEngine(nn.Module):
 
     @staticmethod
     def calculate_entropy(probs: torch.Tensor) -> float:
-        """Calculates normalized Shannon entropy H(P) in [0, 1]."""
+        """
+        Calculates normalized Shannon entropy H(P) in [0, 1].
+
+        Mathematical Formulation:
+            For a discrete probability distribution P = (p_1, ..., p_K) over K outcomes:
+
+            H(P) = -\\sum_{k=1}^K p_k \\log_2(p_k)
+
+            Normalized Shannon Entropy:
+            \\tilde{H}(P) = \\frac{H(P)}{\\log_2(K)} \\in [0, 1]
+
+            Evidential Decision Confidence:
+            C(P) = 1.0 - \\tilde{H}(P) \\in [0, 1]
+
+        When \\tilde{H}(P) exceeds the ambiguity threshold, evidential re-reading is triggered.
+        """
         k = probs.size(-1)
         if k <= 1:
             return 0.0
@@ -647,8 +672,8 @@ class OpenJevVaultGemmaEngine(nn.Module):
         probs = F.softmax(binary_logits, dim=-1)
         p_phi = float(probs[1].item())
 
-        # Calculate Shannon entropy
-        entropy = -float(torch.sum(probs * torch.log(probs + 1e-9)).item())
+        # Calculate normalized Shannon entropy in [0, 1]
+        entropy = self.calculate_entropy(probs)
 
         return {
             "is_phi_pii": p_phi >= 0.70,
@@ -661,9 +686,10 @@ class OpenJevVaultGemmaEngine(nn.Module):
     def from_pretrained(
         cls,
         model_path: str = "./models/RedactX",
-        device: Optional[str] = None
+        device: Optional[str] = None,
+        operating_mode: str = "zero_leakage"
     ) -> "OpenJevVaultGemmaEngine":
-        """Single-line factory loader to use trained OpenJev model in code."""
+        """Single-line factory loader to use trained OpenJev model in code with selectable operating mode."""
         import json
         if not os.path.exists(model_path):
             for candidate in ["./models/RedactX", "./models/redactx", "./models/openjev_vaultgemma"]:
@@ -687,6 +713,8 @@ class OpenJevVaultGemmaEngine(nn.Module):
                 with open(scores_file, "r", encoding="utf-8") as f:
                     instance.scores = json.load(f)
             instance.model_name = getattr(instance, "scores", {}).get("model_name", "RedactX")
+            if operating_mode:
+                instance.set_operating_mode(operating_mode)
             return instance
 
         if os.path.exists(meta_file):
@@ -705,4 +733,6 @@ class OpenJevVaultGemmaEngine(nn.Module):
 
         instance = cls(config=config)
         instance.load_pretrained(model_path)
+        if operating_mode:
+            instance.set_operating_mode(operating_mode)
         return instance

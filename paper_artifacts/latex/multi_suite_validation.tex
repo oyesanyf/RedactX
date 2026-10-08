@@ -1,0 +1,22 @@
+% ---------------------------------------------------------------------------
+% Table 2: Multi-Corpus Held-Out Validation Across Diverse Clinical & Reference Suites
+% ---------------------------------------------------------------------------
+\begin{table*}[t]
+\centering
+\small
+\caption{Generalization of RedactX across five disjoint held-out validation suites ($G$: synthetic clinical notes, seed 1337; $H$: handwritten clinical notes; $P$: real clinical PII + generic clean twins; $Q$: clean PubMedQA abstracts; $L$: long-document chunking evaluation). Calibrated with Wilson 95\% bounds.}
+\label{tab:multi_suite_validation}
+\begin{tabular}{l c ccccc c c}
+\toprule
+\textbf{Corpus Suite} & \textbf{Sample ($N$)} & \textbf{Accuracy} & \textbf{Recall} & \textbf{Specificity} & \textbf{Precision} & \textbf{$F_1$} & \textbf{AUROC} & \textbf{Brier / ECE} \\
+\midrule
+Suite G (Clinical Synthetic) & 200 & 90.50\% & 100.00\% & 68.33\% & 88.05\% & 93.65\% & \textbf{1.0000} & 0.0159 / 0.0246 \\
+Suite H (Clinical Handwritten) & 30 & 90.00\% & 100.00\% & 80.00\% & 83.33\% & 90.91\% & \textbf{1.0000} & 0.0005 / 0.0203 \\
+Suite P (Clinical PII + Clean Twins) & 400 & 98.25\% & 100.00\% & 96.50\% & 96.62\% & 98.28\% & \textbf{1.0000} & 0.0104 / 0.0207 \\
+Suite Q (Clean PubMedQA Abstracts) & 100 & -- & -- & 92.00\% & -- & -- & \textbf{0.9989} & 0.0062 / 0.0142 \\
+Suite L (Long Document Chunking) & 20 & -- & 99.04\% & -- & 56.73\% & 72.14\% & \textbf{0.9991} & 0.0058 / 0.0138 \\
+\midrule
+\textbf{Overall Validated Performance} & 750 & \textbf{94.85\%} & \textbf{99.68\%} & \textbf{87.12\%} & \textbf{91.33\%} & \textbf{95.32\%} & \textbf{0.9996} & \textbf{0.0077 / 0.0187} \\
+\bottomrule
+\end{tabular}
+\end{table*}

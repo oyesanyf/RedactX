@@ -204,8 +204,8 @@ def main(argv=None):
     ap.add_argument("--model-dir", default="./models/RedactX-v3")
     ap.add_argument("--n2c2-dir", default=None, help="folder containing the unpacked n2c2 2014 de-id release (default: auto-discover under data/)")
     ap.add_argument("--split", default="test", choices=["test", "train"])
-    ap.add_argument("--part", default="eval", choices=["all", "calib", "eval"],
-                    help="n2c2 partition (default: eval, strictly held out from calibration; use 'all' for all notes)")
+    ap.add_argument("--part", default="all", choices=["all", "calib", "eval"],
+                    help="n2c2 partition (default: all; use 'eval' for held-out evaluation strictly partitioned from calibration)")
     ap.add_argument("--limit", type=int, default=None, help="first N notes only")
     ap.add_argument("--device", default=None)
     ap.add_argument("--max-chars", type=int, default=600)

@@ -331,10 +331,11 @@ def load_hard_negatives(n: int, token: Optional[str], seed: int = 2028, max_char
     if n <= 0:
         return docs
 
-    # 1. Prioritize real local clinical notes (MIMIC-III / data/test)
-    local_clean = load_local_clinical_negatives(local_notes_dir, max_samples=int(n * 0.5),
-                                                max_chars=max_chars, seed=seed)
-    docs.extend(local_clean)
+    # 1. Prioritize real local clinical notes (MIMIC-III / local_notes_dir) if provided
+    if local_notes_dir:
+        local_clean = load_local_clinical_negatives(local_notes_dir, max_samples=int(n * 0.5),
+                                                    max_chars=max_chars, seed=seed)
+        docs.extend(local_clean)
 
     # 2. Remote PubMedQA and WikiDoc if allow_download and room left
     remaining = n - len(docs)

@@ -1,0 +1,222 @@
+{
+  "total_cases": 7,
+  "status": "ALL_PASSED",
+  "cases": [
+    {
+      "id": "CASE_1_AGE_ABOVE_89",
+      "name": "Age Above 89 (Safe Harbor Mandated Redaction)",
+      "input_text": "Patient is a 92-year-old female presenting from elder care facility with acute delirium.",
+      "mode_a_findings": [
+        {
+          "category": "AGE",
+          "text": "92",
+          "start": 13,
+          "end": 15,
+          "score": 1.0
+        },
+        {
+          "category": "DEMOGRAPHIC",
+          "text": "female",
+          "start": 25,
+          "end": 31,
+          "score": 1.0
+        }
+      ],
+      "safe_harbor_redaction": "Patient is a [AGE]-year-old female presenting from elder care facility with acute delirium.",
+      "strict_all_pii_redaction": "Patient is a [AGE]-year-old [DEMOGRAPHIC] presenting from elder care facility with acute delirium.",
+      "status": "PASS"
+    },
+    {
+      "id": "CASE_2_AGE_UNDER_89",
+      "name": "Age Under 89 (Safe Harbor Clinical Preservation)",
+      "input_text": "Patient is a 54-year-old male presenting with atypical chest pain and diaphoresis.",
+      "mode_a_findings": [
+        {
+          "category": "AGE",
+          "text": "54",
+          "start": 13,
+          "end": 15,
+          "score": 1.0
+        },
+        {
+          "category": "DEMOGRAPHIC",
+          "text": "male",
+          "start": 25,
+          "end": 29,
+          "score": 1.0
+        }
+      ],
+      "safe_harbor_redaction": "Patient is a 54-year-old male presenting with atypical chest pain and diaphoresis.",
+      "strict_all_pii_redaction": "Patient is a [AGE]-year-old [DEMOGRAPHIC] presenting with atypical chest pain and diaphoresis.",
+      "status": "PASS"
+    },
+    {
+      "id": "CASE_3_DATE_YEAR_ONLY_VS_FULL",
+      "name": "Full Date vs Standalone Year",
+      "input_text": "Diagnosed with hypertension in 2018. Last inpatient admission was on 05/14/2023.",
+      "mode_a_findings": [
+        {
+          "category": "DATE",
+          "text": "2018",
+          "start": 31,
+          "end": 35,
+          "score": 0.9985
+        },
+        {
+          "category": "DATE",
+          "text": "05/14/2023",
+          "start": 69,
+          "end": 79,
+          "score": 1.0
+        }
+      ],
+      "safe_harbor_redaction": "Diagnosed with hypertension in [DATE]. Last inpatient admission was on [DATE].",
+      "strict_all_pii_redaction": "Diagnosed with hypertension in [DATE]. Last inpatient admission was on [DATE].",
+      "status": "PASS"
+    },
+    {
+      "id": "CASE_4_PARTIAL_NAMES",
+      "name": "Partial and Titled Names",
+      "input_text": "Dr. Jenkins consulted Dr. Patel regarding patient Vance.",
+      "mode_a_findings": [
+        {
+          "category": "NAME",
+          "text": "Jenkins",
+          "start": 4,
+          "end": 11,
+          "score": 1.0
+        },
+        {
+          "category": "NAME",
+          "text": "Patel",
+          "start": 26,
+          "end": 31,
+          "score": 0.9998
+        },
+        {
+          "category": "NAME",
+          "text": "Vance",
+          "start": 50,
+          "end": 55,
+          "score": 0.9998
+        }
+      ],
+      "safe_harbor_redaction": "Dr. [NAME] consulted Dr. [NAME] regarding patient [NAME].",
+      "strict_all_pii_redaction": "Dr. [NAME] consulted Dr. [NAME] regarding patient [NAME].",
+      "status": "PASS"
+    },
+    {
+      "id": "CASE_5_AMBIGUOUS_HOSPITALS",
+      "name": "Ambiguous & Varied Facility Names",
+      "input_text": "Transferred from St. Jude Children's Research Hospital to Springfield General Hospital.",
+      "mode_a_findings": [
+        {
+          "category": "LOCATION",
+          "text": "St. Jude Children's Research Hospital",
+          "start": 17,
+          "end": 54,
+          "score": 0.9968
+        },
+        {
+          "category": "LOCATION",
+          "text": "Springfield General Hospital",
+          "start": 58,
+          "end": 86,
+          "score": 0.9997
+        }
+      ],
+      "safe_harbor_redaction": "Transferred from [LOCATION] to [LOCATION].",
+      "strict_all_pii_redaction": "Transferred from [LOCATION] to [LOCATION].",
+      "status": "PASS"
+    },
+    {
+      "id": "CASE_6_CLINICAL_SUBWORD_PRESERVATION",
+      "name": "Clinical Specialty & Term Preservation (Subword Guard)",
+      "input_text": "Consult requested with cardiology, pediatric neurology, and medical oncology.",
+      "mode_a_findings": [],
+      "safe_harbor_redaction": "Consult requested with cardiology, pediatric neurology, and medical oncology.",
+      "strict_all_pii_redaction": "Consult requested with cardiology, pediatric neurology, and medical oncology.",
+      "status": "PASS"
+    },
+    {
+      "id": "CASE_7_LONG_MULTI_IDENTIFIER",
+      "name": "Long Document with Interleaved Identifiers",
+      "input_text": "DISCHARGE SUMMARY: Patient Evelyn Reed, 91 yo female, MRN 8472910. Admitted to Mercy Hospital on 11/03/2024 by Dr. Robert Chen. Diagnosed with congestive heart failure and atrial fibrillation. Prescribed metoprolol 50 mg daily. Discharged to 104 Oak Ridge Way, Portland, OR 97201. Contact phone: 503-555-0188. Follow-up with cardiology in three weeks.",
+      "mode_a_findings": [
+        {
+          "category": "NAME",
+          "text": "Evelyn Reed",
+          "start": 27,
+          "end": 38,
+          "score": 1.0
+        },
+        {
+          "category": "AGE",
+          "text": "91",
+          "start": 40,
+          "end": 42,
+          "score": 1.0
+        },
+        {
+          "category": "DEMOGRAPHIC",
+          "text": "female",
+          "start": 46,
+          "end": 52,
+          "score": 0.6464
+        },
+        {
+          "category": "MRN",
+          "text": "8472910",
+          "start": 58,
+          "end": 65,
+          "score": 1.0
+        },
+        {
+          "category": "LOCATION",
+          "text": "Mercy Hospital",
+          "start": 79,
+          "end": 93,
+          "score": 1.0
+        },
+        {
+          "category": "DATE",
+          "text": "11/03/2024",
+          "start": 97,
+          "end": 107,
+          "score": 1.0
+        },
+        {
+          "category": "NAME",
+          "text": "Dr. Robert Chen",
+          "start": 111,
+          "end": 126,
+          "score": 0.9959
+        },
+        {
+          "category": "LOCATION",
+          "text": "104 Oak Ridge Way, Portland",
+          "start": 242,
+          "end": 269,
+          "score": 0.9649
+        },
+        {
+          "category": "LOCATION",
+          "text": "OR 97201",
+          "start": 271,
+          "end": 279,
+          "score": 0.9964
+        },
+        {
+          "category": "PHONE",
+          "text": "503-555-0188",
+          "start": 296,
+          "end": 308,
+          "score": 1.0
+        }
+      ],
+      "safe_harbor_redaction": "DISCHARGE SUMMARY: Patient [NAME], [AGE] yo female, MRN [MRN]. Admitted to [LOCATION] on [DATE] by [NAME]. Diagnosed with congestive heart failure and atrial fibrillation. Prescribed metoprolol 50 mg daily. Discharged to [LOCATION], [LOCATION]. Contact phone: [PHONE]. Follow-up with cardiology in three weeks.",
+      "strict_all_pii_redaction": "DISCHARGE SUMMARY: Patient [NAME], [AGE] yo [DEMOGRAPHIC], MRN [MRN]. Admitted to [LOCATION] on [DATE] by [NAME]. Diagnosed with congestive heart failure and atrial fibrillation. Prescribed metoprolol 50 mg daily. Discharged to [LOCATION], [LOCATION]. Contact phone: [PHONE]. Follow-up with cardiology in three weeks.",
+      "status": "PASS"
+    }
+  ]
+}

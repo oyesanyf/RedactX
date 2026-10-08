@@ -300,7 +300,8 @@ class OpenJevVaultGemmaEngine(nn.Module):
                 offsets = encoding.pop("offset_mapping")[0].tolist() if want_spans else None
                 encoding = encoding.to(self.device)
 
-                outputs = self.model(
+                base_model = getattr(self.model, "model", self.model)
+                outputs = base_model(
                     input_ids=encoding.input_ids,
                     attention_mask=encoding.attention_mask,
                     output_hidden_states=True
@@ -510,29 +511,42 @@ class OpenJevVaultGemmaEngine(nn.Module):
         results: List[Dict[str, Any]] = []
         prev_side = getattr(self.tokenizer, "padding_side", "right")
         self.tokenizer.padding_side = "right"
+        base_model = getattr(self.model, "model", self.model)
         try:
-            for b in range(0, len(texts), max(1, batch_size)):
-                chunk = texts[b:b + batch_size]
+            step = max(1, batch_size)
+            b = 0
+            while b < len(texts):
+                chunk = texts[b:b + step]
                 built = [build_noul_prompt(t, question) for t in chunk]
-                enc = self.tokenizer(
-                    [p for p, _ in built],
-                    return_tensors="pt",
-                    padding=True,
-                    return_offsets_mapping=want_spans,
-                )
-                offsets = enc.pop("offset_mapping").tolist() if want_spans else None
-                enc = enc.to(self.device)
-                outputs = self.model(
-                    input_ids=enc.input_ids,
-                    attention_mask=enc.attention_mask,
-                    output_hidden_states=True,
-                )
-                last = enc.attention_mask.sum(dim=1) - 1
-                rows = torch.arange(enc.input_ids.size(0), device=enc.input_ids.device)
-                pair = self.candidate_logits_fp32(outputs, rows, last, [self.false_token_id, self.true_token_id])
-                probs = F.softmax(pair / max(self.temperature, 1e-3), dim=-1)
-                span_probs = (torch.sigmoid(self.span_locator(outputs.hidden_states[-1].float()))
-                              if want_spans else None)
+                try:
+                    enc = self.tokenizer(
+                        [p for p, _ in built],
+                        return_tensors="pt",
+                        padding=True,
+                        return_offsets_mapping=want_spans,
+                    )
+                    offsets = enc.pop("offset_mapping").tolist() if want_spans else None
+                    enc = enc.to(self.device)
+                    outputs = base_model(
+                        input_ids=enc.input_ids,
+                        attention_mask=enc.attention_mask,
+                        output_hidden_states=True,
+                    )
+                    last = enc.attention_mask.sum(dim=1) - 1
+                    rows = torch.arange(enc.input_ids.size(0), device=enc.input_ids.device)
+                    pair = self.candidate_logits_fp32(outputs, rows, last, [self.false_token_id, self.true_token_id])
+                    probs = F.softmax(pair / max(self.temperature, 1e-3), dim=-1)
+                    span_probs = (torch.sigmoid(self.span_locator(outputs.hidden_states[-1].float()))
+                                  if want_spans else None)
+                except (torch.cuda.OutOfMemoryError, torch.OutOfMemoryError):
+                    if step > 1:
+                        if torch.cuda.is_available():
+                            torch.cuda.empty_cache()
+                        step = max(1, step // 2)
+                        continue
+                    else:
+                        raise
+
                 for i, (text, (_, raw_index)) in enumerate(zip(chunk, built)):
                     rec: Dict[str, Any] = {
                         "p_phi": float(probs[i, 1].item()),
@@ -549,6 +563,7 @@ class OpenJevVaultGemmaEngine(nn.Module):
                             rec["token_probs"] = tp.tolist()
                             rec["raw_ranges"] = raw_ranges
                     results.append(rec)
+                b += step
         finally:
             self.tokenizer.padding_side = prev_side
         return results

@@ -169,8 +169,26 @@ def resolve_n2c2_dir(root: Optional[str] = None) -> str:
 
 
 
-def load_n2c2(root: Optional[str] = None, split: str = "test", limit: Optional[int] = None) -> Tuple[List[Dict], Dict]:
+PARTS = ("all", "calib", "eval")
+
+
+def note_part(doc_id: str) -> str:
+    """
+    Deterministic assignment of a note to 'calib' or 'eval' based on sha1 hash of its ID.
+    Because training used the train split, we can partition the test split into:
+      'calib': 50% of test notes (used for threshold calibration)
+      'eval':  50% of test notes (strictly held out for final benchmark)
+    """
+    import hashlib
+    h = int(hashlib.sha1(doc_id.encode("utf-8")).hexdigest(), 16)
+    return "calib" if h % 2 == 0 else "eval"
+
+
+def load_n2c2(root: Optional[str] = None, split: str = "test", limit: Optional[int] = None,
+              part: str = "all") -> Tuple[List[Dict], Dict]:
     """Loads one split. Auto-discovers root if omitted. Raises FileNotFoundError with instructions if not found."""
+    if part not in PARTS:
+        raise ValueError(f"part must be one of {PARTS}")
     root = resolve_n2c2_dir(root)
     dirs = find_split_dirs(root, split)
     files = sorted(f for d in dirs for f in glob.glob(os.path.join(d, "*.xml")))
@@ -178,6 +196,8 @@ def load_n2c2(root: Optional[str] = None, split: str = "test", limit: Optional[i
         raise FileNotFoundError(
             f"No n2c2 2014 '{split}' XML files under {root!r}. Expected folders {SPLITS[split]}. The corpus requires a "
             "Data Use Agreement from https://portal.dbmi.hms.harvard.edu (2014 De-identification track).")
+    if part != "all":
+        files = [f for f in files if note_part(os.path.splitext(os.path.basename(f))[0]) == part]
     if limit:
         files = files[:limit]
     docs, total = [], {"files": 0, "tags": 0, "exact": 0, "relocated": 0, "dropped": 0}

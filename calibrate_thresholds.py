@@ -204,20 +204,17 @@ def load_generator(n: int, seed: int) -> Tuple[List[Dict], List[str]]:
     return pos, neg
 
 
-def load_n2c2_calibration(root: str, n_pos: int, max_chars: int, seed: int = 4242
-                          ) -> Tuple[List[Dict], List[str], Dict]:
+def load_n2c2_calibration(root: str, n_pos: int, max_chars: int, seed: int = 4242,
+                          split: str = "test", part: str = "calib") -> Tuple[List[Dict], List[str], Dict]:
     """
-    n2c2 2014 TRAIN split only (benchmark_n2c2.py scores the test split, so calibration stays disjoint from it).
-    Notes are cut into production-sized windows.
-      positives  windows that contain gold PHI (source "n2c2"), up to n_pos, sampled with `seed`
-      negatives  the generic-replaced twin of every chosen positive window, plus up to n_pos // 2 windows that
-                 contain no gold PHI at all (real clinical text with nothing to redact)
+    Loads n2c2 2014 notes for calibration. Defaults to the 'calib' half of the test split,
+    guaranteeing that calibration documents were NEVER seen during training.
     """
     import random
     from redactx.data.contrastive_corpus import replace_spans_with_generic
     from redactx.data.n2c2 import load_n2c2, windows_with_spans
 
-    docs, report = load_n2c2(root, split="train")
+    docs, report = load_n2c2(root, split=split, part=part)
     with_phi: List[Dict] = []
     clean: List[str] = []
     for doc in docs:
@@ -262,11 +259,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     ap.add_argument("--n-generator", type=int, default=300)
     ap.add_argument("--generator-seed", type=int, default=4242)
     ap.add_argument("--n2c2-dir", default=None, help="unpacked n2c2 2014 corpus (default: auto-discover under data/)")
+    ap.add_argument("--n2c2-split", default="test", choices=["test", "train"],
+                    help="n2c2 split to calibrate on (default: test, so training split is untouched)")
+    ap.add_argument("--n2c2-part", default="calib", choices=["all", "calib", "eval"],
+                    help="n2c2 partition (default: calib, leaving eval strictly for held-out benchmark)")
     ap.add_argument("--n-n2c2", type=int, default=300, help="n2c2 PHI windows to calibrate on")
     ap.add_argument("--local-notes-dir", default=None, help="folder of local clinical notes e.g. data/test (default: auto-discover)")
     ap.add_argument("--n-local-clean", type=int, default=150, help="local clean clinical windows to calibrate on")
     ap.add_argument("--max-chars", type=int, default=600)
-    ap.add_argument("--batch-size", type=int, default=8)
+    ap.add_argument("--batch-size", type=int, default=4)
     ap.add_argument("--dry-run", action="store_true", help="print the result without writing the file")
     ap.add_argument("--confidence", type=float, default=0.95,
                     help="one-sided confidence that true recall >= target (Wilson lower bound). Default 0.95")
@@ -332,11 +333,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         negatives += gn
         used.append(f"generator(seed={args.generator_seed},n={args.n_generator})")
     if "n2c2" in sources:
-        np_, nn, rep = load_n2c2_calibration(args.n2c2_dir, args.n_n2c2, args.max_chars, args.generator_seed)
+        np_, nn, rep = load_n2c2_calibration(args.n2c2_dir, args.n_n2c2, args.max_chars, args.generator_seed,
+                                             split=args.n2c2_split, part=args.n2c2_part)
         positives += np_
         negatives += nn
-        used.append(f"n2c2-2014-train(windows={len(np_)}+{len(nn)})")
-        print(f"n2c2 train: {rep['files']} notes, {rep['tags']} tags ({rep['relocated']} relocated, "
+        used.append(f"n2c2-2014-{args.n2c2_split}-{args.n2c2_part}(windows={len(np_)}+{len(nn)})")
+        print(f"n2c2 {args.n2c2_split} ({args.n2c2_part}): {rep['files']} notes, {rep['tags']} tags ({rep['relocated']} relocated, "
               f"{rep['dropped']} dropped), {rep['windows_with_phi']} PHI windows / "
               f"{rep['windows_without_phi']} PHI-free windows", flush=True)
     if "local_clean" in sources:

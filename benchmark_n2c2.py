@@ -95,8 +95,8 @@ def run(args) -> Dict:
 
     n2c2_dir = resolve_n2c2_dir(args.n2c2_dir)
     print(f"Using n2c2 corpus: {os.path.abspath(n2c2_dir)}", flush=True)
-    docs, report = load_n2c2(n2c2_dir, args.split, args.limit)
-    print(f"n2c2 2014 {args.split}: {report['files']} notes, {report['tags']} PHI tags "
+    docs, report = load_n2c2(n2c2_dir, args.split, args.limit, part=args.part)
+    print(f"n2c2 2014 {args.split} (part: {args.part}): {report['files']} notes, {report['tags']} PHI tags "
           f"(exact offsets {report['exact']}, relocated {report['relocated']}, dropped {report['dropped']})", flush=True)
 
     OUT: Dict = {"split": args.split, "load_report": report, "n_docs": len(docs),
@@ -204,12 +204,14 @@ def main(argv=None):
     ap.add_argument("--model-dir", default="./models/RedactX-v3")
     ap.add_argument("--n2c2-dir", default=None, help="folder containing the unpacked n2c2 2014 de-id release (default: auto-discover under data/)")
     ap.add_argument("--split", default="test", choices=["test", "train"])
+    ap.add_argument("--part", default="eval", choices=["all", "calib", "eval"],
+                    help="n2c2 partition (default: eval, strictly held out from calibration; use 'all' for all notes)")
     ap.add_argument("--limit", type=int, default=None, help="first N notes only")
     ap.add_argument("--device", default=None)
     ap.add_argument("--max-chars", type=int, default=600)
     ap.add_argument("--overlap", type=int, default=150)
-    ap.add_argument("--batch-size", type=int, default=8)
-    ap.add_argument("--doc-batch", type=int, default=16, help="notes per detect_many call")
+    ap.add_argument("--batch-size", type=int, default=4)
+    ap.add_argument("--doc-batch", type=int, default=8, help="notes per detect_many call")
     ap.add_argument("--presidio-score", type=float, default=0.35)
     ap.add_argument("--skip-presidio", action="store_true")
     ap.add_argument("--skip-redactx", action="store_true", help="Presidio + validators only (no GPU needed)")

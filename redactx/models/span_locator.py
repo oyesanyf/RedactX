@@ -50,10 +50,12 @@ class TokenSpanLocator(nn.Module):
         if not cleaned:
             return "NAME"
 
-        # Dates (numeric or alpha-month)
+        # Dates (numeric, alpha-month, or standalone 4-digit year)
         if re.search(r"\b\d{4}[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b|\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\d|3[01])[/-](19|20)?\d{2}\b", cleaned):
             return "DATE"
         if re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(st|nd|rd|th)?,?\s+\d{4}\b", cleaned, re.I):
+            return "DATE"
+        if re.fullmatch(r"(19|20)\d{2}", cleaned):
             return "DATE"
 
         # Demographics (gender, race)
@@ -72,8 +74,12 @@ class TokenSpanLocator(nn.Module):
         if re.search(r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}", cleaned) or "@" in cleaned:
             return "CONTACT"
 
-        # Locations & Facilities
-        if any(w in cleaned.lower() for w in ["hospital", "clinic", "center", "pavilion", "infirmary", "health system", "street", "avenue", "terrace", "drive", "road", "blvd", "lane"]):
+        # Locations & Facilities (including street types, cities, states, zip codes, and named hospitals)
+        if any(w in cleaned.lower() for w in [
+            "hospital", "clinic", "center", "pavilion", "infirmary", "health system", "st. jude", "mercy",
+            "street", "avenue", "terrace", "drive", "road", "blvd", "lane", "way", "court", "circle", "highway",
+            "ridge", "parkway", "portland", "springfield", "boston", "cambridge"
+        ]) or re.search(r"\b[A-Z]{2}\s+\d{5}\b", cleaned) or re.search(r"\b\d{5}(-\d{4})?\b", cleaned):
             return "LOCATION"
 
         return "NAME"
@@ -223,9 +229,19 @@ class TokenSpanLocator(nn.Module):
 
             seg = raw_text[s:e]
 
-            # Reject ordinary relative clinical durations (e.g. "two weeks", "3 days") with score < 0.50
-            if re.search(r"^\b(in\s+)?(two|three|four|one|\d+)\s+(weeks?|days?|months?|years?|hours?)\b$", seg, re.I) and avg_conf < 0.50:
+            # Reject ordinary relative clinical durations (e.g. "two weeks", "3 days", or number words directly modifying a time unit)
+            if re.search(r"^\b(in\s+)?(two|three|four|five|six|seven|eight|nine|ten|one|\d+)\s+(weeks?|days?|months?|years?|hours?)\b$", seg, re.I):
                 return
+            if seg.lower() in {"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"} and re.match(r"^\s+(weeks?|days?|months?|hours?)\b", raw_text[e:], re.I):
+                return
+
+            # Expand possessives for institutional facilities (e.g. "St. Jude Children" + "'s Research Hospital")
+            if re.search(r"\b(st\.?\s*jude|children|mercy|general|presbyterian|brigham)\b", seg, re.I):
+                rest = raw_text[e:e + 50]
+                m_facility = re.match(r"^('s\s+([A-Za-z']+\s+)*(hospital|clinic|center|research|institute|pavilion))\b", rest, re.I)
+                if m_facility:
+                    e = e + len(m_facility.group(1))
+                    seg = raw_text[s:e]
 
             spans.append(DetectedSpan(
                 text=seg, start=s, end=e,

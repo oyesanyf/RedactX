@@ -1,20 +1,32 @@
 {
-  "timestamp": "2026-10-08 18:29:53 UTC",
+  "timestamp": "2026-10-08 18:59:52 UTC",
   "model": "RedactX-v3 (Google VaultGemma-1B Backbone + OpenJev Causal Decision Head)",
   "held_out_n2c2_evaluation": {
     "n_notes": 259,
     "partition": "eval (strictly held out from calibration)",
     "hipaa_safe_harbor_touched_recall": {
       "redactx_mode_a": 0.9928,
-      "redactx_mode_b": 0.988,
+      "redactx_mode_b": 0.984,
       "redactx_plus_validators": 0.9928,
       "presidio_spacy_lg": 0.6917,
       "hybrid_union": 0.9942
     },
     "wilson_95_recall_lower_bound": {
-      "redactx_mode_a": 0.9801,
-      "redactx_mode_b": 0.9741,
+      "redactx_mode_a": 0.9895,
+      "redactx_mode_b": 0.9796,
+      "presidio_spacy_lg": 0.6765,
+      "calibration_split_lb_certified": 0.9801,
       "certified_target_met": true
+    },
+    "wilson_95_confidence_intervals": {
+      "redactx_mode_a": "[98.95%, 99.51%]",
+      "redactx_mode_b": "[97.96%, 98.75%]",
+      "presidio_spacy_lg": "[67.65%, 70.66%]"
+    },
+    "clinical_concept_retention": {
+      "redactx_mode_a": 0.942,
+      "redactx_mode_b": 0.994,
+      "presidio_spacy_lg": 0.895
     },
     "char_precision_all_phi": {
       "redactx_mode_a": 0.5488,

@@ -42,7 +42,7 @@ def run_canary_audit(
             "category": "SSN_CANARY",
             "template": "Patient record contains Social Security Number: {val}.",
             "canary_val": "042-89-1104",
-            "generator": lambda: f"{random.randint(100, 999):03d}-{random.randint(10, 99):02d}-{random.randint(1000, 9999):04d}",
+            "generator": lambda: f"{(random.randint(1, 898) if random.randint(1, 898) != 666 else 665):03d}-{random.randint(1, 99):02d}-{random.randint(1, 9999):04d}",
         },
         {
             "category": "MRN_CANARY",

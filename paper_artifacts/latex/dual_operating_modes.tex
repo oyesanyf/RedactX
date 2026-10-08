@@ -11,13 +11,18 @@
 \textbf{Attribute} & \textbf{Mode A: Zero-Leakage} & \textbf{Mode B: Balanced Utility} \\
 \midrule
 Primary Objective & Regulatory Legal Compliance & Maximum Clinical Utility \\
-Calibration Criterion & Wilson 95\% Lower Bound $\ge 98\%$ & Utility / $F_1$ Cutoff ($t=0.50$) \\
+Calibration Criterion & Wilson 95\% LB $\ge 98.01\%$ & Utility / $F_1$ Cutoff ($t=0.50$) \\
 Document Threshold ($t_{\text{doc}}$) & 0.009281 & 0.500000 \\
 Span Threshold ($t_{\text{span}}$) & 0.003928 & 0.500000 \\
-Empirical Recall & 99.60\% & 98.40\% \\
-Wilson 95\% Recall Lower Bound & \textbf{98.01\%} (Certified) & 97.41\% \\
-Empirical Specificity & 83.08\% & \textbf{96.50\%} \\
-Empirical Precision & 78.63\% & \textbf{94.60\%} \\
+\midrule
+\multicolumn{3}{l}{\textit{Held-Out Benchmark Performance ($N=259$ Notes, $n=3,620$ PHI Spans)}} \\[2pt]
+HIPAA Touched Recall & \textbf{99.28\%} & 98.40\% \\
+Exact Wilson 95\% Two-Sided CI & \textbf{[98.95\%, 99.51\%]} & [97.96\%, 98.75\%] \\
+Wilson 95\% Lower Bound & \textbf{98.95\%} (Certified) & 97.96\% \\
+Clean Window Specificity & 83.08\% & \textbf{96.50\%} \\
+Strict Character Precision & 54.88\% & \textbf{94.60\%} \\
+Clinical Concept Retention & 94.2\% & \textbf{99.4\%} \\
+\midrule
 Recommended Deployment & External Sharing / DUA & Internal Research / Analytics \\
 \bottomrule
 \end{tabular}

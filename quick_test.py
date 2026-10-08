@@ -10,32 +10,7 @@ import sys
 from redactx.models.openjev import OpenJevVaultGemmaEngine
 from redactx.production.detectors import RedactXDetector
 
-def mask_text(text: str, findings, policy: str = "strict") -> str:
-    """
-    Replaces detected spans with [CATEGORY] tags from end to start.
-    
-    policy:
-      - "strict": masks all detected PII entities (including demographics and ages).
-      - "safe_harbor": follows 45 CFR § 164.514(b)(2) — preserves ages <= 89 and
-        demographic descriptors (e.g. 'male', 'female') as valuable clinical context.
-    """
-    import re
-    chars = list(text)
-    for f in sorted(findings, key=lambda x: x.start, reverse=True):
-        cat_name = f.category.name if hasattr(f.category, "name") else str(f.category).replace("Category.", "")
-        
-        if policy == "safe_harbor":
-            # Under HIPAA Safe Harbor, ages <= 89 are permitted clinical data
-            if cat_name == "AGE":
-                digits = re.findall(r"\d+", f.text)
-                if digits and int(digits[0]) <= 89:
-                    continue
-            # Demographic gender/race is not a Safe Harbor prohibited identifier
-            if cat_name == "DEMOGRAPHIC":
-                continue
-
-        chars[f.start:f.end] = list(f"[{cat_name}]")
-    return "".join(chars)
+from redactx.production.masking import mask_text
 
 def main():
     if hasattr(sys.stdout, "reconfigure"):

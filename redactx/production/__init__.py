@@ -6,4 +6,4 @@ Submodules are imported lazily by callers (this file must stay light: the model 
 `redactx.production.thresholds`, so importing heavy modules here would create import cycles).
 """
 
-__all__ = ["chunking", "detectors", "hipaa", "metrics", "redactor", "server", "settings", "thresholds"]
+__all__ = ["chunking", "detectors", "hipaa", "masking", "metrics", "redactor", "server", "settings", "thresholds"]

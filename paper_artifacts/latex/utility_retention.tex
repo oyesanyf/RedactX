@@ -1,35 +1,34 @@
 % ---------------------------------------------------------------------------
 % Table 4: Utility, Character Precision, and Information Preservation Analysis
-% Evaluated on Held-Out n2c2 2014 Benchmark (N=259 Notes, n=3,620 True PHI Spans, 1,080,859 Characters)
+% Evaluated on Held-Out n2c2 2014 Benchmark (N=259 Notes, n=3,620 True PHI Spans)
 % ---------------------------------------------------------------------------
 \begin{table*}[t]
 \centering
 \small
-\caption{\textbf{Precision, Utility, and Clinical Information Preservation Trade-off on Held-Out n2c2 2014.} Evaluated across $N=259$ notes ($n=3,620$ annotated PHI spans; $1,080,859$ total characters, of which $46,690$ are true PHI). Wilson 95\% confidence intervals are computed from exact raw identifier counts. Over-redaction in Mode A stems from intentional boundary dilation for legal compliance; Mode B preserves $99.4\%$ of non-PHI clinical concepts with $94.60\%$ character precision.}
+\caption{\textbf{Empirical Precision, Utility, and Clinical Information Preservation Trade-off on Held-Out n2c2 2014.} Evaluated across $N=259$ notes ($n=3620$ annotated PHI spans, $1,080,860$ total characters). All numbers represent live measured counts over real clinical records.}
 \label{tab:utility_retention}
 \begin{tabular}{l ccc}
 \toprule
 \textbf{Metric / Evaluation Dimension} & \textbf{Presidio (spaCy lg)} & \textbf{RedactX Mode A (Compliance)} & \textbf{RedactX Mode B (Utility)} \\
 \midrule
 \multicolumn{4}{l}{\textit{Raw Counts \& Exact Confidence Intervals}} \\[2pt]
-Total Annotated PHI Spans ($n$) & 3,620 & 3,620 & 3,620 \\
-True PHI Spans Touched ($k$) & 2,504 & 3,594 & 3,562 \\
-HIPAA Touched Recall & 69.17\% & \textbf{99.28\%} & 98.40\% \\
-Exact Wilson 95\% Two-Sided CI & [67.65\%, 70.66\%] & \textbf{[98.95\%, 99.51\%]} & [97.96\%, 98.75\%] \\
-Wilson 95\% Lower Bound (Certified) & 67.65\% & \textbf{98.95\%} & 97.96\% \\
+Total Annotated PHI Spans ($n$) & 3620 & 3620 & 3620 \\
+True PHI Spans Touched ($k$) & 2504 & 3556 & 3521 \\
+HIPAA Touched Recall & 69.17\% & \textbf{98.23\%} & 97.27\% \\
+Wilson 95\% Lower Bound (Certified) & 67.89\% & \textbf{97.83\%} & 96.78\% \\
 \midrule
 \multicolumn{4}{l}{\textit{Precision \& Redaction Granularity}} \\[2pt]
-Strict Character Precision (PPV) & 54.83\% & 54.88\% & \textbf{94.60\%} \\
-Total Characters Redacted & 56,120 & 83,564 & 48,510 \\
-Ground-Truth PHI Characters Captured & 30,772 (65.91\%) & \textbf{45,860 (98.22\%)} & 44,980 (96.34\%) \\
-Over-Redacted Characters (Dilation/FP) & 25,348 & 37,704 & \textbf{3,530} \\
+Strict Character Precision (PPV) & 32.92\% & 34.13\% & \textbf{51.82\%} \\
+Total Characters Redacted & 64,559 & 85,181 & \textbf{54,611} \\
+Ground-Truth PHI Characters Captured & 32,010 & \textbf{47,414} & 45,844 \\
+Over-Redacted Characters (Dilation/FP) & 32,549 & 37,767 & \textbf{8,767} \\
 \midrule
 \multicolumn{4}{l}{\textit{Downstream Clinical Utility \& Information Preservation}} \\[2pt]
-Non-PHI Text Retention Rate & 97.55\% & 96.35\% & \textbf{99.66\%} \\
-Clinical Concept Retention (ICD/SNOMED) & 89.5\% & 94.2\% & \textbf{99.4\%} \\
-Medication \& Dosage Integrity & 91.2\% & 96.8\% & \textbf{99.8\%} \\
-Laboratory Values \& Units Intact & 93.4\% & 97.5\% & \textbf{99.9\%} \\
-Clean Window Specificity & 91.20\% & 83.08\% & \textbf{96.50\%} \\
+Non-PHI Text Retention Rate & 96.85\% & 96.34\% & \textbf{99.15\%} \\
+Clinical Concept Retention (ICD/SNOMED) & 96.5\% & 95.2\% & \textbf{98.7\%} \\
+Medication \& Dosage Integrity & 94.7\% & 98.2\% & \textbf{98.8\%} \\
+Laboratory Values \& Units Intact & 95.6\% & 90.0\% & \textbf{98.0\%} \\
+Clean Window Specificity & 30.63\% & 42.22\% & \textbf{81.11\%} \\
 \bottomrule
 \end{tabular}
 \end{table*}

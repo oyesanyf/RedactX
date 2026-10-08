@@ -1,78 +1,330 @@
 {
-  "timestamp": "2026-10-08 18:59:52Z",
+  "timestamp": "2026-10-08 20:07:40Z",
   "benchmark": "n2c2 2014 De-identification (259 strictly held-out notes)",
   "configurations": [
     {
       "id": "full_mode_a",
       "name": "RedactX-v3 (Mode A: Compliance)",
-      "description": "Full model: VaultGemma-1B + Causal Gate + Locator + Boundary Guards (Zero-Leakage)",
-      "hipaa_recall": 0.9928,
-      "char_precision": 0.5488,
-      "clean_specificity": 0.8308,
-      "clinical_concept_retention": 0.942,
-      "vram_gb": 3.1,
-      "latency_ms": 84.5,
-      "is_primary": true
+      "description": "Full system: Causal Gate + Locator + Boundary Guards (Zero-Leakage)",
+      "hipaa_recall": 0.9823,
+      "wilson_95_lb": 0.9783,
+      "char_precision": 0.3413,
+      "clean_specificity": 0.4222,
+      "clinical_concept_retention": 0.9519290282649061,
+      "diagnosis_retention": 0.963855421686747,
+      "medication_retention": 0.982078853046595,
+      "lab_retention": 0.8995363214837713,
+      "vram_gb": 3.28,
+      "latency_ms": 1237.68,
+      "total_seconds": 320.56,
+      "is_primary": true,
+      "raw_metrics": {
+        "n_spans": 3620,
+        "touched_spans": 3556,
+        "touched_recall": 0.9823,
+        "wilson_95_lb": 0.9783,
+        "gold_chars": 29542,
+        "covered_chars": 29076,
+        "redacted_chars": 85181,
+        "char_precision": 0.3413,
+        "char_recall": 0.9842,
+        "clean_windows_total": 630,
+        "clean_windows_correct": 266,
+        "clean_specificity": 0.4222
+      },
+      "utility_metrics": {
+        "total_characters": 1080860,
+        "non_phi_retention_rate": 0.9634,
+        "redacted_characters": 85181,
+        "captured_phi_characters": 47414,
+        "over_redacted_characters": 37767,
+        "diagnoses": {
+          "total": 2158,
+          "preserved": 2080,
+          "retention_rate": 0.9639
+        },
+        "medications": {
+          "total": 1395,
+          "preserved": 1370,
+          "retention_rate": 0.9821
+        },
+        "laboratory_values": {
+          "total": 1294,
+          "preserved": 1164,
+          "retention_rate": 0.8995
+        },
+        "overall_clinical_concept_retention": 0.9519
+      }
     },
     {
       "id": "full_mode_b",
       "name": "RedactX-v3 (Mode B: Balanced Utility)",
-      "description": "Full model with balanced threshold (doc=0.50, span=0.50)",
-      "hipaa_recall": 0.984,
-      "char_precision": 0.946,
-      "clean_specificity": 0.965,
-      "clinical_concept_retention": 0.994,
-      "vram_gb": 3.1,
-      "latency_ms": 84.5,
-      "is_primary": true
+      "description": "Full system with balanced utility cutoff (doc=0.50, span=0.50)",
+      "hipaa_recall": 0.9727,
+      "wilson_95_lb": 0.9678,
+      "char_precision": 0.5182,
+      "clean_specificity": 0.8111,
+      "clinical_concept_retention": 0.9865896430781927,
+      "diagnosis_retention": 0.989805375347544,
+      "medication_retention": 0.9878136200716846,
+      "lab_retention": 0.9799072642967542,
+      "vram_gb": 3.28,
+      "latency_ms": 1237.68,
+      "total_seconds": 320.56,
+      "is_primary": true,
+      "raw_metrics": {
+        "n_spans": 3620,
+        "touched_spans": 3521,
+        "touched_recall": 0.9727,
+        "wilson_95_lb": 0.9678,
+        "gold_chars": 29542,
+        "covered_chars": 28298,
+        "redacted_chars": 54611,
+        "char_precision": 0.5182,
+        "char_recall": 0.9579,
+        "clean_windows_total": 630,
+        "clean_windows_correct": 511,
+        "clean_specificity": 0.8111
+      },
+      "utility_metrics": {
+        "total_characters": 1080860,
+        "non_phi_retention_rate": 0.9915,
+        "redacted_characters": 54611,
+        "captured_phi_characters": 45844,
+        "over_redacted_characters": 8767,
+        "diagnoses": {
+          "total": 2158,
+          "preserved": 2136,
+          "retention_rate": 0.9898
+        },
+        "medications": {
+          "total": 1395,
+          "preserved": 1378,
+          "retention_rate": 0.9878
+        },
+        "laboratory_values": {
+          "total": 1294,
+          "preserved": 1268,
+          "retention_rate": 0.9799
+        },
+        "overall_clinical_concept_retention": 0.9866
+      }
     },
     {
       "id": "ablation_no_causal_gate",
       "name": "w/o Causal Gate (Span Locator Only)",
-      "description": "Pure token-level classification head without document-level causal gating prior",
-      "hipaa_recall": 0.981,
-      "char_precision": 0.712,
-      "clean_specificity": 0.841,
-      "clinical_concept_retention": 0.951,
-      "vram_gb": 3.1,
-      "latency_ms": 112.4,
-      "is_primary": false
+      "description": "Pure token span locator without document-level causal gating prior",
+      "hipaa_recall": 0.9826,
+      "wilson_95_lb": 0.9786,
+      "char_precision": 0.3401,
+      "clean_specificity": 0.3698,
+      "clinical_concept_retention": 0.9513100887146688,
+      "diagnosis_retention": 0.9633920296570899,
+      "medication_retention": 0.982078853046595,
+      "lab_retention": 0.8979907264296755,
+      "vram_gb": 3.28,
+      "latency_ms": 1237.68,
+      "total_seconds": 320.56,
+      "is_primary": false,
+      "raw_metrics": {
+        "n_spans": 3620,
+        "touched_spans": 3557,
+        "touched_recall": 0.9826,
+        "wilson_95_lb": 0.9786,
+        "gold_chars": 29542,
+        "covered_chars": 29078,
+        "redacted_chars": 85494,
+        "char_precision": 0.3401,
+        "char_recall": 0.9843,
+        "clean_windows_total": 630,
+        "clean_windows_correct": 233,
+        "clean_specificity": 0.3698
+      },
+      "utility_metrics": {
+        "total_characters": 1080860,
+        "non_phi_retention_rate": 0.9631,
+        "redacted_characters": 85494,
+        "captured_phi_characters": 47416,
+        "over_redacted_characters": 38078,
+        "diagnoses": {
+          "total": 2158,
+          "preserved": 2079,
+          "retention_rate": 0.9634
+        },
+        "medications": {
+          "total": 1395,
+          "preserved": 1370,
+          "retention_rate": 0.9821
+        },
+        "laboratory_values": {
+          "total": 1294,
+          "preserved": 1162,
+          "retention_rate": 0.898
+        },
+        "overall_clinical_concept_retention": 0.9513
+      }
     },
     {
       "id": "ablation_no_span_locator",
       "name": "w/o Span Locator (Doc Gate Only)",
-      "description": "Causal gate document classifier only (fail-closed document redaction)",
-      "hipaa_recall": 0.996,
-      "char_precision": 0.0432,
-      "clean_specificity": 0.965,
-      "clinical_concept_retention": 0.0,
-      "vram_gb": 2.9,
-      "latency_ms": 32.0,
-      "is_primary": false
+      "description": "Causal gate document classifier only (fail-closed window redaction)",
+      "hipaa_recall": 0.9997,
+      "wilson_95_lb": 0.9988,
+      "char_precision": 0.0311,
+      "clean_specificity": 0.0937,
+      "clinical_concept_retention": 0.10068083350526098,
+      "diagnosis_retention": 0.0968489341983318,
+      "medication_retention": 0.1032258064516129,
+      "lab_retention": 0.10432766615146831,
+      "vram_gb": 3.28,
+      "latency_ms": 1237.68,
+      "total_seconds": 320.56,
+      "is_primary": false,
+      "raw_metrics": {
+        "n_spans": 3620,
+        "touched_spans": 3619,
+        "touched_recall": 0.9997,
+        "wilson_95_lb": 0.9988,
+        "gold_chars": 29542,
+        "covered_chars": 29540,
+        "redacted_chars": 951005,
+        "char_precision": 0.0311,
+        "char_recall": 0.9999,
+        "clean_windows_total": 630,
+        "clean_windows_correct": 59,
+        "clean_specificity": 0.0937
+      },
+      "utility_metrics": {
+        "total_characters": 1080860,
+        "non_phi_retention_rate": 0.1258,
+        "redacted_characters": 951005,
+        "captured_phi_characters": 48655,
+        "over_redacted_characters": 902350,
+        "diagnoses": {
+          "total": 2158,
+          "preserved": 209,
+          "retention_rate": 0.0968
+        },
+        "medications": {
+          "total": 1395,
+          "preserved": 144,
+          "retention_rate": 0.1032
+        },
+        "laboratory_values": {
+          "total": 1294,
+          "preserved": 135,
+          "retention_rate": 0.1043
+        },
+        "overall_clinical_concept_retention": 0.1007
+      }
     },
     {
       "id": "ablation_no_boundary_guards",
       "name": "w/o Boundary & Safe Harbor Guards",
       "description": "Raw SentencePiece subword token decoding without clinical word preservation",
-      "hipaa_recall": 0.9928,
-      "char_precision": 0.512,
-      "clean_specificity": 0.814,
-      "clinical_concept_retention": 0.762,
-      "vram_gb": 3.1,
-      "latency_ms": 81.2,
-      "is_primary": false
+      "hipaa_recall": 0.9961,
+      "wilson_95_lb": 0.994,
+      "char_precision": 0.2995,
+      "clean_specificity": 0.3175,
+      "clinical_concept_retention": 0.9162368475345575,
+      "diagnosis_retention": 0.9300278035217794,
+      "medication_retention": 0.942652329749104,
+      "lab_retention": 0.8647604327666152,
+      "vram_gb": 3.28,
+      "latency_ms": 1237.68,
+      "total_seconds": 320.56,
+      "is_primary": false,
+      "raw_metrics": {
+        "n_spans": 3620,
+        "touched_spans": 3606,
+        "touched_recall": 0.9961,
+        "wilson_95_lb": 0.994,
+        "gold_chars": 29542,
+        "covered_chars": 29231,
+        "redacted_chars": 97587,
+        "char_precision": 0.2995,
+        "char_recall": 0.9895,
+        "clean_windows_total": 630,
+        "clean_windows_correct": 200,
+        "clean_specificity": 0.3175
+      },
+      "utility_metrics": {
+        "total_characters": 1080860,
+        "non_phi_retention_rate": 0.9518,
+        "redacted_characters": 97587,
+        "captured_phi_characters": 47833,
+        "over_redacted_characters": 49754,
+        "diagnoses": {
+          "total": 2158,
+          "preserved": 2007,
+          "retention_rate": 0.93
+        },
+        "medications": {
+          "total": 1395,
+          "preserved": 1315,
+          "retention_rate": 0.9427
+        },
+        "laboratory_values": {
+          "total": 1294,
+          "preserved": 1119,
+          "retention_rate": 0.8648
+        },
+        "overall_clinical_concept_retention": 0.9162
+      }
     },
     {
       "id": "baseline_presidio",
       "name": "Baseline: Microsoft Presidio (spaCy lg)",
       "description": "Rule-based recognizers and general NER model",
       "hipaa_recall": 0.6917,
-      "char_precision": 0.5483,
-      "clean_specificity": 0.912,
-      "clinical_concept_retention": 0.895,
+      "wilson_95_lb": 0.6789,
+      "char_precision": 0.3292,
+      "clean_specificity": 0.3063,
+      "clinical_concept_retention": 0.9645141324530637,
+      "diagnosis_retention": 0.9810009267840594,
+      "medication_retention": 0.9469534050179211,
+      "lab_retention": 0.9559505409582689,
       "vram_gb": 0.0,
-      "latency_ms": 40.9,
-      "is_primary": false
+      "latency_ms": 156.05,
+      "total_seconds": 40.42,
+      "is_primary": false,
+      "raw_metrics": {
+        "n_spans": 3620,
+        "touched_spans": 2504,
+        "touched_recall": 0.6917,
+        "wilson_95_lb": 0.6789,
+        "gold_chars": 29542,
+        "covered_chars": 21250,
+        "redacted_chars": 64559,
+        "char_precision": 0.3292,
+        "char_recall": 0.7193,
+        "clean_windows_total": 630,
+        "clean_windows_correct": 193,
+        "clean_specificity": 0.3063
+      },
+      "utility_metrics": {
+        "total_characters": 1080860,
+        "non_phi_retention_rate": 0.9685,
+        "redacted_characters": 64559,
+        "captured_phi_characters": 32010,
+        "over_redacted_characters": 32549,
+        "diagnoses": {
+          "total": 2158,
+          "preserved": 2117,
+          "retention_rate": 0.981
+        },
+        "medications": {
+          "total": 1395,
+          "preserved": 1321,
+          "retention_rate": 0.947
+        },
+        "laboratory_values": {
+          "total": 1294,
+          "preserved": 1237,
+          "retention_rate": 0.956
+        },
+        "overall_clinical_concept_retention": 0.9645
+      }
     }
   ]
 }

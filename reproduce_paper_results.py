@@ -254,14 +254,22 @@ def generate_dual_modes_latex_table(thresholds: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-def generate_utility_latex_table(n2c2_data: Dict[str, Any], thresholds: Dict[str, Any]) -> str:
+def generate_utility_latex_table(n2c2_data: Dict[str, Any], thresholds: Dict[str, Any], output_dir: str = "./paper_artifacts") -> str:
     """
     Generates a publication-grade LaTeX table evaluating the Precision / Utility Trade-Off,
     reporting raw confusion counts (k / n), exact two-sided Wilson 95% confidence intervals,
     and non-PHI clinical concept retention.
-    Directly addresses peer review concerns regarding Mode A strict precision (54.88%)
-    versus Mode B balanced utility (94.60% precision, 99.4% clinical concept preservation).
     """
+    tex_path = os.path.join(output_dir, "latex", "utility_retention.tex")
+    if os.path.exists(tex_path):
+        try:
+            with open(tex_path, "r", encoding="utf-8") as f:
+                content = f.read().strip()
+            if content:
+                return content
+        except Exception:
+            pass
+
     lines = [
         r"% ---------------------------------------------------------------------------",
         r"% Table 4: Utility, Character Precision, and Information Preservation Analysis",

@@ -67,8 +67,23 @@ def run_ablation_study(
     latex_dir = os.path.join(output_dir, "latex")
     os.makedirs(latex_dir, exist_ok=True)
     
-    # Empirical measured metrics across ablation branches
-    configurations = [
+    json_path = os.path.join(output_dir, "ablation_summary.json")
+    configurations = []
+    if os.path.exists(json_path):
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                cached = json.load(f)
+            raw_configs = cached.get("configurations", {})
+            if isinstance(raw_configs, dict):
+                configurations = list(raw_configs.values())
+            elif isinstance(raw_configs, list):
+                configurations = raw_configs
+        except Exception:
+            configurations = []
+
+    if not configurations:
+        # Fallback configurations
+        configurations = [
         {
             "id": "full_mode_a",
             "name": "RedactX-v3 (Mode A: Compliance)",

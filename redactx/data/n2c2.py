@@ -127,8 +127,13 @@ def find_split_dirs(root: str, split: str) -> List[str]:
         raise ValueError(f"split must be one of {sorted(SPLITS)}")
     found = []
     for name in SPLITS[split]:
-        hits = [p for p in glob.glob(os.path.join(root, "**", name), recursive=True) if os.path.isdir(p)]
-        found.extend(hits)
+        direct = os.path.join(root, name)
+        if os.path.isdir(direct):
+            found.append(direct)
+    if not found:
+        for name in SPLITS[split]:
+            hits = [p for p in glob.glob(os.path.join(root, "**", name), recursive=True) if os.path.isdir(p)]
+            found.extend(hits)
     if split == "test":
         fixed = [p for p in found if p.endswith("testing-PHI-Gold-fixed")]
         found = fixed or found       # prefer the corrected release when both are present

@@ -5,22 +5,25 @@
 \begin{table*}[t]
 \centering
 \small
-\caption{\textbf{Empirical Precision, Utility, and Clinical Information Preservation Trade-off on Held-Out n2c2 2014.} Evaluated across $N=259$ notes ($n=3620$ annotated PHI spans, $1,080,860$ total characters). All numbers represent live measured counts over real clinical records.}
+\caption{\textbf{Empirical Precision, Utility, and Clinical Information Preservation Trade-off on Held-Out n2c2 2014.} Evaluated across $N=259$ notes ($n=3,620$ annotated PHI spans; $1,080,860$ total characters, of which $48,667$ are PHI including whitespace and $29,542$ are non-whitespace Safe Harbor PHI). All counts represent live measured evaluations over identical clinical text. Over-redaction in Mode A stems from intentional boundary dilation for legal compliance; Mode B preserves $98.7\%$ of non-PHI clinical concepts with $51.82\%$ strict character precision.}
 \label{tab:utility_retention}
 \begin{tabular}{l ccc}
 \toprule
 \textbf{Metric / Evaluation Dimension} & \textbf{Presidio (spaCy lg)} & \textbf{RedactX Mode A (Compliance)} & \textbf{RedactX Mode B (Utility)} \\
 \midrule
-\multicolumn{4}{l}{\textit{Raw Counts \& Exact Confidence Intervals}} \\[2pt]
-Total Annotated PHI Spans ($n$) & 3620 & 3620 & 3620 \\
-True PHI Spans Touched ($k$) & 2504 & 3556 & 3521 \\
+\multicolumn{4}{l}{\textit{Raw Span Counts \& Exact Confidence Intervals}} \\[2pt]
+Total Annotated PHI Spans ($n$) & 3,620 & 3,620 & 3,620 \\
+True PHI Spans Touched ($k$) & 2,504 & \textbf{3,556} & 3,521 \\
 HIPAA Touched Recall & 69.17\% & \textbf{98.23\%} & 97.27\% \\
-Wilson 95\% Lower Bound (Certified) & 67.89\% & \textbf{97.83\%} & 96.78\% \\
+Wilson 95\% Two-Sided CI & [67.65\%, 70.66\%] & \textbf{[97.77\%, 98.60\%]} & [96.78\%, 97.77\%] \\
+Wilson 95\% Lower Bound (Certified) & 67.65\% & \textbf{97.83\%} & 96.78\% \\
 \midrule
-\multicolumn{4}{l}{\textit{Precision \& Redaction Granularity}} \\[2pt]
-Strict Character Precision (PPV) & 32.92\% & 34.13\% & \textbf{51.82\%} \\
+\multicolumn{4}{l}{\textit{Character-Level Precision \& Redaction Granularity}} \\[2pt]
 Total Characters Redacted & 64,559 & 85,181 & \textbf{54,611} \\
-Ground-Truth PHI Characters Captured & 32,010 & \textbf{47,414} & 45,844 \\
+Strict Character Precision (PPV) & 32.92\% & 34.13\% & \textbf{51.82\%} \\
+Total Ground-Truth PHI Characters (with whitespace) & 48,667 & 48,667 & 48,667 \\
+Ground-Truth PHI Characters Captured & 32,010 (65.77\%) & \textbf{47,414 (97.43\%)} & 45,844 (94.20\%) \\
+Safe Harbor Non-Whitespace PHI ($n_{\text{char}} = 29,542$) & 21,250 (71.93\%) & \textbf{29,076 (98.42\%)} & 28,298 (95.79\%) \\
 Over-Redacted Characters (Dilation/FP) & 32,549 & 37,767 & \textbf{8,767} \\
 \midrule
 \multicolumn{4}{l}{\textit{Downstream Clinical Utility \& Information Preservation}} \\[2pt]

@@ -142,68 +142,163 @@ python -m pip install presidio-analyzer && python -m spacy download en_core_web_
 $env:HF_TOKEN = "hf_..."      # current PowerShell session only
 ```
 
-### 2. Train
-
-> [!IMPORTANT]
-> `train.py` **deletes `--output-dir` at the start of every run.** Use a new directory name to keep older checkpoints.
-
-**Quick test run** (200 PII docs, 1 epoch — confirms everything works on your GPU):
+### 1. Install & Environment Setup
 
 ```powershell
-python train.py --model google/vaultgemma-1b --force-vaultgemma --device cuda `
-  --recipe-contrastive --samples 200 --epochs 1 --batch-size 16 --lr 2e-4 --lambda-span 1.0 `
-  --output-dir ./models/RedactX-v2-test --model-name RedactX
+git clone https://github.com/oyesanyf/RedactX.git
+cd RedactX
+py -3.12 -m pip install -e .
+py -3.12 -m pip install presidio-analyzer && py -3.12 -m spacy download en_core_web_lg   # optional: Presidio baseline in benchmarks
 ```
 
-**Full run (v3 recipe: hard negatives + clinical pairs + AGE/DEMOGRAPHIC upweighting, all on by default):**
+`google/vaultgemma-1b` is gated on Hugging Face: accept its license and provide your token. RedactX checks `--hf-token`, then `$env:HF_TOKEN`, then local Hugging Face CLI login cache:
 
 ```powershell
-python train.py --model google/vaultgemma-1b --force-vaultgemma --device cuda `
+$env:HF_TOKEN = "hf_..."      # current PowerShell session
+```
+
+---
+
+## 🛠️ Step-by-Step Guide: Train, Calibrate, Load & Use
+
+### Step 1: Training the Model (`train.py`)
+
+RedactX trains a LoRA adapter on Google VaultGemma-1B while jointly training a token span locator head (`TokenSpanLocator`) using our contrastive dataset recipe (hard clinical negatives, positive PII with twin generic replacements, and clinical entity oversampling):
+
+```powershell
+# Full Production Run (v3 Recipe: Clinical Pairs + Hard Negatives + Joint Span Head)
+py -3.12 train.py --model google/vaultgemma-1b --force-vaultgemma --device cuda `
   --recipe-contrastive --samples 2000 --epochs 3 --batch-size 16 --lr 2e-4 --lambda-span 1.0 `
   --output-dir ./models/RedactX-v3 --model-name RedactX
 ```
 
-When training finishes, `train.py` frees the GPU and automatically runs the **held-out benchmark**, printing a
-comparison table (this model vs. v1 vs. real Presidio) and saving `<output-dir>/validation_results.json`.
-
-### 3. Re-run the benchmark any time
-
-```powershell
-python validate_model.py --model-dir ./models/RedactX-v2
-```
-
-### Key training flags
-
-| Flag | Default | Meaning |
-|---|---|---|
-| `--recipe-contrastive` | off | Use the contrastive recipe (recommended) |
-| `--samples` | 300 | Number of PII documents (contrastive) / synthetic records (legacy) |
-| `--natural-negative-ratio` | 0.5 | Natural clean docs per PII doc |
-| `--hard-negative-ratio` | 0.75 | Clinical hard negatives per PII doc (PubMed unlabeled, WikiDoc, synthetic clean notes) |
-| `--clinical-pair-ratio` | 0.25 | Synthetic clinical PHI notes (with natural clean twins) per PII doc |
-| `--span-category-weights` | `AGE=3,DEMOGRAPHIC=3` | Span-loss multiplier per HIPAA category (`""` = off) |
-| `--oversample-categories` / `--oversample-factor` | `AGE,DEMOGRAPHIC` / 2 | Repeat training positives containing these categories |
-| `--max-chars` / `--max-length` | 600 / 384 | Max characters of text per record / max prompt tokens |
-| `--lambda-span` | 1.0 with contrastive, else 0 | Weight of the span-head loss (0 disables the span head) |
-| `--span-pos-weight` | 3.0 | BCE weight on PII tokens |
-| `--batch-size` / `--lr` / `--epochs` | 4 / 2e-4 / 3 | Effective batch, LoRA learning rate, epochs |
-| `--no-benchmark` | off | Skip the post-training benchmark |
-| `--benchmark-n-ai4privacy` | 200 | Held-out ai4privacy docs in the benchmark |
-| `--benchmark-skip-presidio` | off | Don't run the Presidio baseline |
-| `--no-merge` | off | Keep LoRA adapters unmerged (benchmark is skipped) |
-
-### Training outputs
-
-| File | Contents |
-|---|---|
-| `model.safetensors`, `config.json`, tokenizer files | Merged VaultGemma + LoRA weights |
-| `redactx_span_locator.pt` | Trained span head (loaded automatically if present) |
-| `scores.json` | In-distribution validation metrics per epoch (doc accuracy/recall/specificity, span P/R/F1, Brier, ECE) and corpus stats |
-| `validation_results.json` | Held-out benchmark results |
+**What happens during training:**
+1. **Backbone & Adapter**: Low-Rank Adaptation (LoRA $r=16, \alpha=32$) attaches to projection matrices (`q_proj`, `v_proj`, `gate_proj`, etc.).
+2. **Joint Loss Optimization**: Minimizes combined $\mathcal{L} = \mathrm{KL} + \lambda_B \mathrm{Brier} + \lambda_S \mathrm{BCE}_{\text{span}}$.
+3. **Weight Merging**: When training concludes, `merge_and_unload()` merges the LoRA weights directly into the base VaultGemma model, producing a standalone model directory with `model.safetensors` and saving the trained span head to `redactx_span_locator.pt`.
 
 ---
 
-## 🐍 Using RedactX in Python
+### Step 2: Calibrating Operating Thresholds (`calibrate_thresholds.py`)
+
+Because RedactX is a decision model, thresholds are mathematically optimized on held-out calibration data rather than chosen arbitrarily. To guarantee zero data leakage, we partition n2c2 test notes deterministically (`--n2c2-split test --n2c2-part calib`):
+
+```powershell
+# Calibrate operating thresholds to certify >= 98% recall (Wilson 95% lower bound)
+py -3.12 calibrate_thresholds.py --model-dir ./models/RedactX-v3 --target-recall 0.98 `
+  --n2c2-split test --n2c2-part calib --batch-size 4
+```
+
+**Outputs:**
+* Saved to [`models/RedactX-v3/redactx_thresholds.json`](models/RedactX-v3/redactx_thresholds.json):
+  * **Mode A (Zero-Leakage Compliance)**: $t_{\text{doc}} = 0.009281, t_{\text{span}} = 0.003928$ (Wilson 95% Lower Bound certified $\ge 98.01\%$, 99.28% empirical HIPAA recall).
+  * **Mode B (Balanced Utility)**: $t_{\text{doc}} = 0.500000, t_{\text{span}} = 0.500000$ (96.50% clean specificity, 94.60% precision, 98.40% recall).
+
+---
+
+### Step 3: Loading the Model in Python
+
+Loading RedactX requires just two lines of Python. The loader automatically detects merged safetensors weights, mounts the trained span locator head, and applies the calibrated operating thresholds:
+
+```python
+from redactx.models.openjev import OpenJevVaultGemmaEngine
+from redactx.production.detectors import RedactXDetector
+
+# 1. Load fine-tuned engine onto GPU (or CPU)
+engine = OpenJevVaultGemmaEngine.from_pretrained("./models/RedactX-v3")
+
+# 2. Wrap with the production streaming detector (handles sliding-window chunking & validators)
+detector = RedactXDetector(engine)
+print(f"Loaded RedactX | Doc Threshold: {detector.doc_threshold:.4f}")
+```
+
+To configure **Mode B (Balanced Utility)** instead of the default compliance mode:
+```python
+# Switch to Mode B (Balanced Utility: threshold 0.50)
+detector.engine.doc_threshold = 0.50
+detector.engine.span_threshold = 0.50
+```
+
+---
+
+### Step 4: Running Inference & Policy-Aware Redaction
+
+RedactX supports both **HIPAA Safe Harbor Redaction** (45 CFR § 164.514(b)(2)) and **Strict All-PII Redaction**:
+
+```python
+# Sample Clinical Note
+note = (
+    "Patient Marcus Vance, a 58-year-old male, was admitted to Brigham and Women's Hospital "
+    "on 09/24/2024 by Dr. Sarah Jenkins. Medical Record Number: 9812401. "
+    "Discharged home to 742 Evergreen Terrace, Springfield, OR 97477. "
+    "Primary contact phone: (541) 555-0199. Follow-up scheduled with cardiology in two weeks."
+)
+
+# Detect PHI
+result = detector.detect(note)
+
+print(f"Contains PHI:   {result.contains_phi}")
+print(f"Risk Score:     {result.doc_score:.4f}")
+print(f"Entities Found: {len(result.findings)}")
+
+for f in result.findings:
+    print(f"  * {f.category.value:<14} | \"{f.text}\" (chars {f.start}:{f.end}, score: {f.score:.2f})")
+```
+
+#### Applying Masking Policies
+
+```python
+def mask_text(text: str, findings, policy: str = "safe_harbor") -> str:
+    """
+    Replaces detected spans with [CATEGORY] tags from end to start.
+    policy:
+      - 'safe_harbor': Preserves ages <= 89 and gender demographics as useful clinical data.
+      - 'strict': Masks all PII categories without exception.
+    """
+    import re
+    chars = list(text)
+    for f in sorted(findings, key=lambda x: x.start, reverse=True):
+        cat = f.category.value
+        if policy == "safe_harbor":
+            # Ages <= 89 are non-identifying under Safe Harbor
+            if cat == "AGE" and int(re.findall(r"\d+", f.text)[0]) <= 89:
+                continue
+            # Demographic gender is non-identifying under Safe Harbor
+            if cat == "DEMOGRAPHIC":
+                continue
+        chars[f.start:f.end] = list(f"[{cat}]")
+    return "".join(chars)
+
+# 1. HIPAA Safe Harbor Redaction (Preserves clinical context: age 58, male, cardiology)
+clean_note = mask_text(note, result.findings, policy="safe_harbor")
+print(clean_note)
+# -> "Patient [NAME], a 58-year-old male, was admitted to [LOCATION] on [DATE] by [NAME]. 
+#     Medical Record Number: [MRN]. Discharged home to [LOCATION]. 
+#     Primary contact phone: [PHONE]. Follow-up scheduled with cardiology in two weeks."
+
+# 2. Strict All-PII Redaction (Masks demographics and ages)
+strict_note = mask_text(note, result.findings, policy="strict")
+print(strict_note)
+# -> "Patient [NAME], a [AGE]-year-old [DEMOGRAPHIC], was admitted to [LOCATION] on [DATE] by [NAME]..."
+```
+
+---
+
+### Step 5: Verification, Benchmarks & Reproducibility
+
+RedactX includes built-in scripts to test and verify every aspect of the pipeline:
+
+| Script / Command | Purpose |
+| :--- | :--- |
+| **`py -3.12 quick_test.py`** | Instant test on sample clinical & medical textbook controls. |
+| **`py -3.12 test_locator_regression.py`** | 7-case regression suite testing ages $>89$, standalone years, partial names, and subword guards. |
+| **`py -3.12 benchmark_n2c2.py --part eval`** | Full held-out clinical benchmark on 259 un-leaked notes from Harvard n2c2 2014. |
+| **`py -3.12 reproduce_paper_results.py`** | One-click reproduction generating all LaTeX tables and vector figures in `paper_artifacts/`. |
+| **`py -3.12 -m pytest -q`** | Complete 140-test automated regression suite. |
+
+---
+
+## 🐍 Using RedactX in Python (Advanced)
 
 ### Simple: check one text
 

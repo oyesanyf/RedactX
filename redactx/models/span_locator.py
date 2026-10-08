@@ -50,14 +50,32 @@ class TokenSpanLocator(nn.Module):
         if not cleaned:
             return "NAME"
 
+        # Dates (numeric or alpha-month)
         if re.search(r"\b\d{4}[-/](0?[1-9]|1[0-2])[-/](0?[1-9]|[12]\d|3[01])\b|\b(0?[1-9]|1[0-2])[/-](0?[1-9]|[12]\d|3[01])[/-](19|20)?\d{2}\b", cleaned):
             return "DATE"
+        if re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}(st|nd|rd|th)?,?\s+\d{4}\b", cleaned, re.I):
+            return "DATE"
+
+        # Demographics (gender, race)
+        if cleaned.lower() in {"male", "female", "man", "woman", "transgender", "non-binary", "caucasian", "african american", "hispanic", "asian"}:
+            return "DEMOGRAPHIC"
+
+        # Age patterns (standalone 1-3 digits or digits with age suffix)
+        if re.fullmatch(r"\b\d{1,3}\b", cleaned) or re.search(r"\b\d{1,3}[ -]?(year[s]?[- ]?old|yo|y/o)\b", cleaned, re.I):
+            return "AGE"
+
+        # Structured IDs and MRN
         if re.search(r"\b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b", cleaned) or "MRN" in cleaned.upper() or re.search(r"\b\d{6,10}\b", cleaned):
             return "IDENTIFIER"
+
+        # Contact info (Phone / Email)
         if re.search(r"\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}", cleaned) or "@" in cleaned:
             return "CONTACT"
-        if any(w in cleaned.lower() for w in ["hospital", "clinic", "center", "pavilion", "street", "avenue", "terrace", "drive"]):
+
+        # Locations & Facilities
+        if any(w in cleaned.lower() for w in ["hospital", "clinic", "center", "pavilion", "infirmary", "health system", "street", "avenue", "terrace", "drive", "road", "blvd", "lane"]):
             return "LOCATION"
+
         return "NAME"
 
     def extract_spans(
@@ -163,6 +181,15 @@ class TokenSpanLocator(nn.Module):
         spans: List[DetectedSpan] = []
         cur_start, cur_end, confs = -1, -1, []
 
+        CLINICAL_NON_PHI = frozenset({
+            "cardiology", "neurology", "oncology", "radiology", "pathology", "pediatrics",
+            "orthopedics", "dermatology", "psychiatry", "gastroenterology", "pulmonology",
+            "nephrology", "urology", "hematology", "rheumatology", "anesthesiology",
+            "ophthalmology", "surgery", "medicine", "infarction", "pharmacotherapy",
+            "nitroglycerin", "aspirin", "ischemia", "cardiovascular", "hypertension",
+            "discomfort", "shortness", "breath", "cardiologist", "cardiac"
+        })
+
         def flush():
             if cur_start < 0:
                 return
@@ -171,13 +198,40 @@ class TokenSpanLocator(nn.Module):
                 s += 1
             while e > s and (raw_text[e - 1].isspace() or raw_text[e - 1] in "\u200b\u200c\u200d\ufeff"):
                 e -= 1
-            if (e - s > 1) or (e - s == 1 and raw_text[s].isalnum()):
-                seg = raw_text[s:e]
-                spans.append(DetectedSpan(
-                    text=seg, start=s, end=e,
-                    category=self.infer_category(seg),
-                    confidence=round(sum(confs) / len(confs), 4)
-                ))
+            if not ((e - s > 1) or (e - s == 1 and raw_text[s].isalnum())):
+                return
+
+            # Check word boundary alignment in raw_text
+            w_start = s
+            while w_start > 0 and raw_text[w_start - 1].isalnum():
+                w_start -= 1
+            w_end = e
+            while w_end < len(raw_text) and raw_text[w_end].isalnum():
+                w_end += 1
+
+            is_subword = (w_start < s) or (w_end > e)
+            full_word = raw_text[w_start:w_end].lower()
+            avg_conf = sum(confs) / max(len(confs), 1)
+
+            # Reject subword fragments of known clinical non-PHI terms (e.g. "card" + "iology")
+            if is_subword and full_word in CLINICAL_NON_PHI:
+                return
+
+            # Reject low-confidence subword fragments (e.g. subword token false alarms with score < 0.50)
+            if is_subword and avg_conf < 0.50:
+                return
+
+            seg = raw_text[s:e]
+
+            # Reject ordinary relative clinical durations (e.g. "two weeks", "3 days") with score < 0.50
+            if re.search(r"^\b(in\s+)?(two|three|four|one|\d+)\s+(weeks?|days?|months?|years?|hours?)\b$", seg, re.I) and avg_conf < 0.50:
+                return
+
+            spans.append(DetectedSpan(
+                text=seg, start=s, end=e,
+                category=self.infer_category(seg),
+                confidence=round(avg_conf, 4)
+            ))
 
         for (rs, re_), prob in zip(raw_ranges, probs_list):
             if rs < 0 or prob < threshold:

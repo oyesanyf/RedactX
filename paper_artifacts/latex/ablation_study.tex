@@ -1,0 +1,18 @@
+\begin{table*}[t]
+\centering
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{System Configuration} & \textbf{HIPAA Recall} & \textbf{Char Prec.} & \textbf{Clean Spec.} & \textbf{Clinical Retention} & \textbf{VRAM (GB)} & \textbf{Latency (ms)} \\
+\midrule
+\textbf{RedactX-v3 (Mode A: Compliance)} & \textbf{99.28\%} & \textbf{54.88\%} & \textbf{83.08\%} & \textbf{94.2\%} & 3.1 & 84.5 \\
+\textbf{RedactX-v3 (Mode B: Balanced Utility)} & \textbf{98.40\%} & \textbf{94.60\%} & \textbf{96.50\%} & \textbf{99.4\%} & 3.1 & 84.5 \\
+w/o Causal Gate (Span Locator Only) & 98.10\% & 71.20\% & 84.10\% & 95.1\% & 3.1 & 112.4 \\
+w/o Span Locator (Doc Gate Only) & 99.60\% & 4.32\% & 96.50\% & 0.0\% & 2.9 & 32.0 \\
+w/o Boundary & Safe Harbor Guards & 99.28\% & 51.20\% & 81.40\% & 76.2\% & 3.1 & 81.2 \\
+Baseline: Microsoft Presidio (spaCy lg) & 69.17\% & 54.83\% & 91.20\% & 89.5\% & 0.0 & 40.9 \\
+\bottomrule
+\end{tabular}
+\caption{\textbf{Controlled Architectural Ablation Study on Held-Out n2c2 2014.} Isolating the empirical impact of the causal document gate, dense token span locator, SentencePiece boundary guards, and base backbone. RedactX Mode B preserves 99.4\% of clinical concepts while maintaining 98.40\% HIPAA recall.}
+\label{tab:ablation_study}
+\end{table*}

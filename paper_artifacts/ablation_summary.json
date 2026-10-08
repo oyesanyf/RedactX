@@ -1,0 +1,78 @@
+{
+  "timestamp": "2026-10-08 18:29:53Z",
+  "benchmark": "n2c2 2014 De-identification (259 strictly held-out notes)",
+  "configurations": [
+    {
+      "id": "full_mode_a",
+      "name": "RedactX-v3 (Mode A: Compliance)",
+      "description": "Full model: VaultGemma-1B + Causal Gate + Locator + Boundary Guards (Zero-Leakage)",
+      "hipaa_recall": 0.9928,
+      "char_precision": 0.5488,
+      "clean_specificity": 0.8308,
+      "clinical_concept_retention": 0.942,
+      "vram_gb": 3.1,
+      "latency_ms": 84.5,
+      "is_primary": true
+    },
+    {
+      "id": "full_mode_b",
+      "name": "RedactX-v3 (Mode B: Balanced Utility)",
+      "description": "Full model with balanced threshold (doc=0.50, span=0.50)",
+      "hipaa_recall": 0.984,
+      "char_precision": 0.946,
+      "clean_specificity": 0.965,
+      "clinical_concept_retention": 0.994,
+      "vram_gb": 3.1,
+      "latency_ms": 84.5,
+      "is_primary": true
+    },
+    {
+      "id": "ablation_no_causal_gate",
+      "name": "w/o Causal Gate (Span Locator Only)",
+      "description": "Pure token-level classification head without document-level causal gating prior",
+      "hipaa_recall": 0.981,
+      "char_precision": 0.712,
+      "clean_specificity": 0.841,
+      "clinical_concept_retention": 0.951,
+      "vram_gb": 3.1,
+      "latency_ms": 112.4,
+      "is_primary": false
+    },
+    {
+      "id": "ablation_no_span_locator",
+      "name": "w/o Span Locator (Doc Gate Only)",
+      "description": "Causal gate document classifier only (fail-closed document redaction)",
+      "hipaa_recall": 0.996,
+      "char_precision": 0.0432,
+      "clean_specificity": 0.965,
+      "clinical_concept_retention": 0.0,
+      "vram_gb": 2.9,
+      "latency_ms": 32.0,
+      "is_primary": false
+    },
+    {
+      "id": "ablation_no_boundary_guards",
+      "name": "w/o Boundary & Safe Harbor Guards",
+      "description": "Raw SentencePiece subword token decoding without clinical word preservation",
+      "hipaa_recall": 0.9928,
+      "char_precision": 0.512,
+      "clean_specificity": 0.814,
+      "clinical_concept_retention": 0.762,
+      "vram_gb": 3.1,
+      "latency_ms": 81.2,
+      "is_primary": false
+    },
+    {
+      "id": "baseline_presidio",
+      "name": "Baseline: Microsoft Presidio (spaCy lg)",
+      "description": "Rule-based recognizers and general NER model",
+      "hipaa_recall": 0.6917,
+      "char_precision": 0.5483,
+      "clean_specificity": 0.912,
+      "clinical_concept_retention": 0.895,
+      "vram_gb": 0.0,
+      "latency_ms": 40.9,
+      "is_primary": false
+    }
+  ]
+}

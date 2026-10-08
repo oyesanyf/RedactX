@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-10-08 14:36:59 UTC",
+  "timestamp": "2026-10-08 18:29:53 UTC",
   "model": "RedactX-v3 (Google VaultGemma-1B Backbone + OpenJev Causal Decision Head)",
   "held_out_n2c2_evaluation": {
     "n_notes": 259,
@@ -42,7 +42,9 @@
   "tables": [
     "n2c2_results.tex",
     "multi_suite_validation.tex",
-    "dual_operating_modes.tex"
+    "dual_operating_modes.tex",
+    "utility_retention.tex",
+    "ablation_study.tex"
   ],
   "execution_seconds": 0.01
 }

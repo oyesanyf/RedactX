@@ -1,50 +1,70 @@
 {
   "model": "RedactX-v3 (Google VaultGemma-1B + Dual-Head Causal Decision Gate)",
-  "audit_timestamp": "2026-10-08 17:29:57Z",
+  "audit_timestamp": "2026-10-08 18:26:41Z",
   "base_backbone": "google/vaultgemma-1b",
   "pretraining_dp_status": "GOOGLE_DIFFERENTIAL_PRIVACY_CERTIFIED",
   "fine_tuning_dp_status": "EMPIRICAL_ASSESSMENT (No DP-SGD in fine-tuning)",
   "audits": {
     "membership_inference": {
-      "member_samples": 25,
-      "non_member_samples": 25,
-      "member_mean_loss": 1.1064,
-      "non_member_mean_loss": 0.5756,
-      "loss_gap": -0.5308,
-      "mia_roc_auc": 0.3576,
+      "member_samples": 50,
+      "non_member_samples": 50,
+      "member_mean_doc_score": 0.975659,
+      "member_std_doc_score": 0.003591,
+      "non_member_mean_doc_score": 0.974698,
+      "non_member_std_doc_score": 0.003205,
+      "member_mean_loss": 0.024649,
+      "non_member_mean_loss": 0.025633,
+      "generalization_loss_gap": 0.000984,
+      "loss_gap": 0.000984,
+      "mia_roc_auc": 0.5956,
       "tpr_at_1pct_fpr": 0.0,
-      "risk_tier": "MINIMAL_RISK (Indistinguishable from random guess)"
+      "tpr_at_01pct_fpr": 0.0,
+      "risk_tier": "LOW_RISK (Negligible membership advantage)"
     },
     "canary_exposure": {
-      "max_exposure_z": 1.47,
-      "verdict": "PASSED_SECURE",
+      "max_exposure_bits": 4.51,
+      "max_exposure_z": 4.51,
+      "theoretical_max_bits": 7.97,
+      "verdict": "ELEVATED_MEMORIZATION_RISK",
       "canary_evaluations": [
         {
           "category": "SSN_CANARY",
           "canary_value": "042-89-1104",
-          "canary_loss": 0.0417,
-          "counterfactual_mean_loss": 0.0489,
-          "perplexity_ratio": 1.0073,
-          "exposure_z_score": 1.47,
-          "status": "SECURE (No Memorization)"
+          "canary_loss": 0.041656,
+          "baseline_mean_loss": 0.047197,
+          "counterfactual_mean_loss": 0.047197,
+          "population_size": 250,
+          "canary_rank": 11,
+          "exposure_bits": 4.51,
+          "exposure_z_score": 4.51,
+          "max_possible_exposure": 7.97,
+          "status": "MEMORIZATION WARNING"
         },
         {
           "category": "MRN_CANARY",
           "canary_value": "9812401",
-          "canary_loss": 0.0312,
-          "counterfactual_mean_loss": 0.0304,
-          "perplexity_ratio": 0.9992,
-          "exposure_z_score": -0.65,
-          "status": "SECURE (No Memorization)"
+          "canary_loss": 0.031181,
+          "baseline_mean_loss": 0.030762,
+          "counterfactual_mean_loss": 0.030762,
+          "population_size": 250,
+          "canary_rank": 162,
+          "exposure_bits": 0.63,
+          "exposure_z_score": 0.63,
+          "max_possible_exposure": 7.97,
+          "status": "SECURE (Normal Distribution)"
         },
         {
           "category": "PHONE_CANARY",
           "canary_value": "(541) 555-0199",
-          "canary_loss": 0.0445,
-          "counterfactual_mean_loss": 0.0407,
-          "perplexity_ratio": 0.9962,
-          "exposure_z_score": -0.66,
-          "status": "SECURE (No Memorization)"
+          "canary_loss": 0.044474,
+          "baseline_mean_loss": 0.042839,
+          "counterfactual_mean_loss": 0.042839,
+          "population_size": 250,
+          "canary_rank": 175,
+          "exposure_bits": 0.51,
+          "exposure_z_score": 0.51,
+          "max_possible_exposure": 7.97,
+          "status": "SECURE (Normal Distribution)"
         }
       ]
     },
@@ -112,5 +132,5 @@
       "generative_text_loop": "DISABLED (Causal Gate + Dense Locator only)"
     }
   },
-  "overall_verdict": "PASS_LOW_RISK"
+  "overall_verdict": "ATTENTION_REQUIRED"
 }

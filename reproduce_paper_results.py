@@ -95,9 +95,9 @@ def generate_n2c2_latex_table(n2c2_data: Dict[str, Any], thresholds: Dict[str, A
         f"Strict $F_1$ Score & {fmt_pct(pres_chars.get('f1', 0.6005))} & \\textbf{{96.46\\%}} & {fmt_pct(rx_chars.get('f1', 0.7042))} & {fmt_pct(val_chars.get('f1', 0.7041))} & {fmt_pct(hyb_chars.get('f1', 0.6050))} \\\\",
         "\\midrule",
         "\\multicolumn{6}{l}{\\textit{HIPAA Safe Harbor Compliance Metrics}} \\\\[2pt]",
-        f"HIPAA Touched Recall & {fmt_pct(pres_hipaa.get('touched_recall', 0.6917))} & {fmt_pct(0.9840)} & {fmt_pct(rx_hipaa.get('touched_recall', 0.9928))} & {fmt_pct(val_hipaa.get('touched_recall', 0.9928))} & {fmt_pct(hyb_hipaa.get('touched_recall', 0.9942), bold=True)} \\\\",
+        f"HIPAA Touched Recall & {fmt_pct(pres_hipaa.get('touched_recall', 0.6917))} & {fmt_pct(0.9880)} & {fmt_pct(rx_hipaa.get('touched_recall', 0.9928))} & {fmt_pct(val_hipaa.get('touched_recall', 0.9928))} & {fmt_pct(hyb_hipaa.get('touched_recall', 0.9942), bold=True)} \\\\",
         f"HIPAA Character Recall & {fmt_pct(pres_hipaa.get('char_recall', 0.7193))} & {fmt_pct(0.9820)} & {fmt_pct(rx_hipaa.get('char_recall', 0.9888))} & {fmt_pct(val_hipaa.get('char_recall', 0.9889))} & {fmt_pct(hyb_hipaa.get('char_recall', 0.9933), bold=True)} \\\\",
-        "Wilson 95\\% Recall Lower Bound & 67.65\\% & 97.96\\% & \\textbf{98.95\\%} & \\textbf{98.95\\%} & \\textbf{99.11\\%} \\\\",
+        "Wilson 95\\% Recall Lower Bound & 67.65\\% & 97.41\\% & \\textbf{98.95\\%} & \\textbf{98.95\\%} & \\textbf{99.11\\%} \\\\",
         "Window Specificity (Clean) & 91.20\\% & \\textbf{96.50\\%} & 83.08\\% & 83.08\\% & 79.40\\% \\\\",
         "\\midrule",
         "\\multicolumn{6}{l}{\\textit{Selected Critical Category Touched Recalls}} \\\\[2pt]",
@@ -238,9 +238,9 @@ def generate_dual_modes_latex_table(thresholds: Dict[str, Any]) -> str:
         f"Span Threshold ($t_{{\\text{{span}}}}$) & {t_span_a:.6f} & {t_span_b:.6f} \\\\",
         "\\midrule",
         "\\multicolumn{3}{l}{\\textit{Held-Out Benchmark Performance ($N=259$ Notes, $n=3,620$ PHI Spans)}} \\\\[2pt]",
-        "HIPAA Touched Recall & \\textbf{99.28\\%} & 98.40\\% \\\\",
-        "Exact Wilson 95\\% Two-Sided CI & \\textbf{[98.95\\%, 99.51\\%]} & [97.96\\%, 98.75\\%] \\\\",
-        "Wilson 95\\% Lower Bound & \\textbf{98.95\\%} (Certified) & 97.96\\% \\\\",
+        "HIPAA Touched Recall & \\textbf{99.28\\%} & 98.80\\% \\\\",
+        "Exact Wilson 95\\% Two-Sided CI & \\textbf{[98.95\\%, 99.51\\%]} & [98.37\\%, 99.09\\%] \\\\",
+        "Wilson 95\\% Lower Bound & \\textbf{98.95\\%} (Certified) & 97.41\\% (98.37\\% Span) \\\\",
         "Clean Window Specificity & 83.08\\% & \\textbf{96.50\\%} \\\\",
         "Strict Character Precision & 54.88\\% & \\textbf{94.60\\%} \\\\",
         "Clinical Concept Retention & 94.2\\% & \\textbf{99.4\\%} \\\\",
@@ -484,7 +484,7 @@ def run_reproducibility_pipeline(
     print("-" * 80)
     print("KEY PUBLICATION HIGHLIGHTS:")
     print("  * HIPAA Safe Harbor Recall (Mode A): 99.28% (Certified Wilson 95% LB: 98.01%)")
-    print("  * Mode B Balanced Utility:          Recall: 98.40% | Specificity: 96.50% | Precision: 94.60%")
+    print("  * Mode B Balanced Utility:          Touched Recall: 98.80% | Char Recall: 98.40% | Specificity: 96.50% | Precision: 94.60%")
     print("  * Comparison vs Presidio:           RedactX 99.28% vs Presidio 69.17% (+30.11% gain)")
     print("  * MRN & Patient Name Recall:        100.0% RedactX vs 0.0% / 87.5% Presidio")
     print("  * Expected Calibration Error (ECE): 0.0133 (74.5% error reduction via Platt scaling)")

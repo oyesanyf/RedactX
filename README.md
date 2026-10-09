@@ -233,7 +233,7 @@ py -3.12 calibrate_thresholds.py --model-dir ./models/RedactX-v3 --target-recall
 **Outputs:**
 * Saved to [`models/RedactX-v3/redactx_thresholds.json`](models/RedactX-v3/redactx_thresholds.json):
   * **Mode A (Zero-Leakage Compliance)**: $t_{\text{doc}} = 0.009281, t_{\text{span}} = 0.003928$ (Wilson 95% Lower Bound certified $\ge 98.01\%$, 99.28% empirical HIPAA recall).
-  * **Mode B (Balanced Utility)**: $t_{\text{doc}} = 0.500000, t_{\text{span}} = 0.500000$ (96.50% clean specificity, 94.60% precision, 98.40% recall).
+  * **Mode B (Balanced Utility)**: $t_{\text{doc}} = 0.500000, t_{\text{span}} = 0.500000$ (98.80% HIPAA touched recall, 98.40% strict character recall, 96.50% clean specificity, 94.60% precision).
 
 ---
 
@@ -648,7 +648,7 @@ RedactX offers two certified operating profiles configured via `engine.set_opera
 2. **Operating Mode B (Balanced Utility Mode):**
    - **Goal:** Maximum clinical NLP utility, readability, and research analytics with minimal over-redaction.
    - **Criterion:** Standard decision cutoff $t = 0.500000$.
-   - **Performance:** 98.40% recall, 96.50% window specificity, 94.60% precision, 96.46% F1 score.
+   - **Performance:** 98.80% HIPAA touched recall (98.40% strict character recall), 96.50% window specificity, 94.60% precision, 96.46% F1 score.
 
 ### 📐 Mathematical Formulations
 

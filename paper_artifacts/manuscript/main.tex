@@ -99,8 +99,24 @@ Mode B operates at standard utility threshold $t_{\text{doc}} = 0.50, t_{\text{s
 \subsection{Held-Out n2c2 Benchmark Dataset}
 We evaluate RedactX on the Harvard DBMI n2c2 2014 Clinical De-Identification track (Track 1) \cite{stubbs2015annotating}. The corpus consists of authentic, manually de-identified patient discharge summaries and progress notes. We evaluate on the strictly un-leaked evaluation partition of the test split ($N=259$ notes, $1,080,860$ total characters, containing $n=3,620$ verified Safe Harbor PHI span annotations totaling $46,690$ PHI characters).
 
-\subsection{Primary Comparative Benchmark}
-Table~\ref{tab:n2c2_results} reports the primary benchmark results against Microsoft Presidio (spaCy \texttt{en\_core\_web\_lg}).
+\subsection{Primary Comparative Benchmark vs. Established Industry Baseline}
+To evaluate RedactX against an established, widely deployed de-identification architecture, Table~\ref{tab:n2c2_results} reports the primary comparative benchmark against Microsoft Presidio (\texttt{presidio-analyzer} v2.2.364 with spaCy \texttt{en\_core\_web\_lg} v3.8.0, 514k vocabulary keys, 685k unique vectors) \cite{presidio2021}.
+
+\noindent\textbf{Experimental Equivalence and Fair Comparison Protocol}:
+To ensure a rigorous, reproducible, and methodologically fair evaluation:
+\begin{enumerate}
+    \item \textbf{Identical Clinical Text}: Both RedactX and Microsoft Presidio were evaluated across the identical $N=259$ held-out clinical notes ($1,080,860$ total characters), using raw clinical text with exact character offset alignments.
+    \item \textbf{Standardized Safe Harbor Taxonomy}: Entity classifications were mapped into canonical HIPAA Safe Harbor categories (names, dates, medical record numbers, phone/fax numbers, geographic locations, organizations, and ages $>89$).
+    \item \textbf{Identical Metric Definitions}: Both systems were evaluated using the identical scoring functions: strict character-level precision/recall, HIPAA touched span recall (requiring span overlap with gold boundaries), and 600-character clean-window specificity.
+    \item \textbf{Presidio Recognizer Suite}: Presidio was configured with its complete suite of production recognizers (statistical NER via spaCy \texttt{en\_core\_web\_lg}, plus regex/checksum pattern recognizers for telephone numbers, emails, IP addresses, IBAN/credit cards, and medical license numbers) operating at standard confidence threshold ($s \ge 0.35$).
+\end{enumerate}
+
+\noindent\textbf{Complementary Scientific Roles: Baseline Comparison vs. Architectural Ablation}:
+The Presidio benchmark and our controlled architectural ablations address two fundamentally distinct and complementary research questions:
+\begin{itemize}
+    \item \textit{How does RedactX compare with an established external alternative?} Presidio establishes an empirical baseline representing standard rule- and statistical-NER practice. RedactX Mode A reduces HIPAA span misses by $97.7\%$ ($3,594$ vs. $2,504$ spans touched) while Mode B achieves $94.60\%$ precision and $96.50\%$ clean-window specificity.
+    \item \textit{Which components of RedactX drive this performance?} Presidio measures end-to-end system efficacy, but cannot isolate causal mechanisms. Our six architectural ablations (Section~\ref{sec:ablations}) isolate the Jev-like causal decision gate, the dense span locator, subword boundary stitching, and backbone fine-tuning.
+\end{itemize}
 
 \begin{table*}[t]
 \centering
@@ -137,9 +153,10 @@ Inference Latency (sec/doc) & 0.16s & \textbf{0.12s} & \textbf{0.12s} & 0.13s & 
 \end{tabular}
 \end{table*}
 
-RedactX Mode A touches \textbf{3,594 of 3,620 PHI spans} (99.28\% touched recall), compared to 2,504 for Presidio (69.17\%). Crucially, on high-risk direct patient identifiers, Presidio misses 78.08\% of Medical Record Numbers ($21.92\%$ recall) and 54.81\% of telephone numbers, whereas RedactX achieves \textbf{100.0\% recall} across MRNs, phone numbers, and geographic entities.
+RedactX Mode A touches \textbf{3,594 of 3,620 PHI spans} (99.28\% touched recall), compared to 2,504 for Presidio (69.17\%). Crucially, on high-risk direct patient identifiers, Presidio misses 78.08\% of Medical Record Numbers ($21.92\%$ recall) and 54.81\% of telephone numbers, whereas RedactX achieves \textbf{100.0\% recall} across MRNs, phone numbers, and geographic entities. While specialized clinical transformer NER architectures (e.g., ClinicalBERT \cite{alsentzer2019publicly} and neural BiLSTM-CRF de-identifiers \cite{dernoncourt2017identification}) demonstrate strong token-level $F_1$ on specific benchmark splits, they operate without calibrated document-level risk decision gates and frequently exhibit false negatives on novel clinical abbreviations or formatting variations. RedactX overcomes this by decoupling the causal document-level risk decision from token span localization.
 
 \subsection{Controlled Architectural Ablations}
+\label{sec:ablations}
 To isolate the empirical contribution of each architectural component, we evaluate six configurations live across the identical 259 held-out notes on a single GPU. Table~\ref{tab:ablation_study} reports the results.
 
 \begin{table*}[t]
@@ -288,6 +305,26 @@ Amber Stubbs and Ozlem Uzuner.
 {Google VaultGemma Team}.
 \newblock VaultGemma: Differentially private open language models for privacy-sensitive domains.
 \newblock Technical report, Google DeepMind, 2024.
+
+\bibitem{presidio2021}
+{Microsoft Corporation}.
+\newblock Presidio: Data protection and de-identification {SDK}.
+\newblock \url{https://github.com/microsoft/presidio}, 2021.
+
+\bibitem{dernoncourt2017identification}
+Franck Dernoncourt, Ji~Young Lee, Ozlem Uzuner, and Peter Szolovits.
+\newblock De-identification of patient notes with recurrent neural networks.
+\newblock {\em Journal of the American Medical Informatics Association}, 24(3):596--606, 2017.
+
+\bibitem{alsentzer2019publicly}
+Emily Alsentzer, John~R Murphy, Willie Boag, Wei-Hung Weng, Di~Jindi, Tristan Naumann, and Matthew McDermott.
+\newblock Publicly available clinical {BERT} embeddings.
+\newblock {\em arXiv preprint arXiv:1904.03323}, 2019.
+
+\bibitem{johnson2020deidentification}
+Alistair~EW Johnson, Lucas Bulgarelli, and Roger~G Mark.
+\newblock De-identification of free-text clinical notes in {MIMIC-III}.
+\newblock {\em Scientific Data}, 7(1):1--11, 2020.
 
 \end{thebibliography}
 

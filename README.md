@@ -9,6 +9,7 @@
 ![status](https://img.shields.io/badge/status-experimental-orange)
 ![python](https://img.shields.io/badge/python-3.10%2B-blue)
 ![backbone](https://img.shields.io/badge/backbone-google%2Fvaultgemma--1b-4285F4)
+![parameters](https://img.shields.io/badge/parameters-1.04B-blueviolet)
 ![fine--tune](https://img.shields.io/badge/fine--tune-LoRA-8A2BE2)
 ![benchmarks](https://img.shields.io/badge/v2%20benchmarks-measured-brightgreen)
 
@@ -114,10 +115,21 @@ Under HIPAA and Data Use Agreements (DUAs), patient EHR notes cannot be sent to 
 * **Blazing Single-Pass Latency**: Operates at **~84.5 ms per window** on GPU—enabling real-time streaming de-identification across massive clinical archives.
 * **Air-Gapped Security**: Operates 100% locally with zero internet egress.
 
+#### 5. Exact Parameter Count & Module Breakdown
+RedactX operates at a compact **1.04 Billion parameters** (**1,039,073,473 total parameters** across deployed runtime components):
+* **Backbone Trunk (`VaultGemmaForCausalLM`)**: **1,038,741,120 parameters** (~1.039 B) in `bfloat16` (~2.08 GB in `model.safetensors`).
+  * **Vocabulary Embeddings**: 256,000 SentencePiece tokens $\times$ 1,152 hidden dimension = 294,912,000 parameters (tied embeddings).
+  * **Transformer Core**: 26 layers, hidden dimension $d = 1,152$, intermediate MLP dimension $d_{\text{ff}} = 6,912$, 4 attention heads (head dimension 256).
+* **Span Locator Head (`TokenSpanLocator`)**: **332,353 parameters** (~332 K) in `float32` (~1.33 MB in `redactx_span_locator.pt`).
+  * A 2-layer projection MLP ($\mathbb{R}^{1152} \to \mathbb{R}^{288} \to \mathbb{R}^1$) mapping sequence hidden states directly to per-token PHI logits.
+* **Probability Calibrator (`PlattTemperatureScaler`)**: **1 scalar parameter** (learned temperature $T$, stored in `redactx_thresholds.json`).
+* **LoRA Adapters (Training)**: LoRA ($r=16, \alpha=32$) on projection modules (`q_proj`, `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`) introduces ~13M trainable parameters before being merged and unloaded into the base weights.
+
 #### Architectural Comparison
 
 | Dimension | Classical NER (Presidio / spaCy) | Stanford BERT-deid | Generative LLMs (GPT-4 / LLaMA-70B) | **RedactX (VaultGemma-1B)** |
 | :--- | :--- | :--- | :--- | :--- |
+| **Model Parameters** | ~0 (rules / statistical models) | ~110M (BERT-base) | 70B – 1.8T+ | **✅ 1.04B (1,038,741,120 + 332k head)** |
 | **Document-Level PHI Gate** | ❌ None (only isolated spans) | ❌ None | ⚠️ Probabilistic prompt | **✅ Calibrated causal gate** ($P(\text{PHI})$) |
 | **HIPAA Touched Recall** | 84.21% | 96.72% | ~97.5% | **✅ 99.28% (Certified $\ge 98.01\%$)** |
 | **Hallucination Risk** | 0% (Rule-based) | 0% (Span-tagger) | ❌ High (Alters clinical terms) | **✅ 0% (Zero generative decoding)** |
@@ -711,14 +723,14 @@ When $\tilde{H}(P) > \tau$ ($\tau = 0.45$), the engine triggers active re-readin
                     │
                     ▼
    ┌────────────────────────────────────────────────────────┐
-   │ Google VaultGemma-1B (Differentially Private Backbone)  │
+   │ Google VaultGemma-1B (1,038,741,120 parameters)        │
    │           + OpenJev LoRA Merged Weights                │
    └────────────────────────────────────────────────────────┘
          │                                       │
          ▼ (Last token vocabulary logits)        ▼ (Last hidden layer [B, L, D])
    ┌───────────────────────────────┐     ┌────────────────────────────────┐
    │  Causal Binary Gate Readout   │     │  Dense TokenSpanLocator Head   │
-   │  Softmax over 'true'/'false'  │     │  Sub-token entity projection   │
+   │  Softmax over 'true'/'false'  │     │  (332,353 parameters - MLP)    │
    └───────────────────────────────┘     └────────────────────────────────┘
          │                                       │
          ▼ (P(PHI) Document Probability)         ▼ (Per-token attribution)

@@ -1,0 +1,34 @@
+name: RFCHunt Security Audit
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Audit mode: all-deep-audit | deep-audit | trust-boundary"
+        required: false
+        default: "all-deep-audit"
+      fail_on_severity:
+        description: "Severity gate: none | CRITICAL | HIGH"
+        required: false
+        default: "none"
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  rfchunt:
+    uses: oyesanyf/rfchunt/.github/workflows/rfchunt-reusable-audit.yml@main
+    with:
+      mode: ${{ inputs.mode || 'all-deep-audit' }}
+      enable_poc: true
+      trust_max_files: 80
+      depth: 50
+      fail_on_severity: ${{ inputs.fail_on_severity || 'none' }}
+      offline: true

@@ -441,6 +441,7 @@ def load_contrastive_corpus(
     oversample_factor: int = 1,
     local_notes_dir: Optional[str] = None,
     n2c2_train_ratio: float = 0.0,
+    n2c2_root: Optional[str] = None,
     _pii_docs: Optional[List[Dict[str, Any]]] = None,
     _natural_docs: Optional[List[Dict[str, Any]]] = None,
     _allow_download: bool = True,
@@ -476,7 +477,8 @@ def load_contrastive_corpus(
                            "Check network access and HF_TOKEN.")
     clinical = load_clinical_pairs(int(round(len(real_pii) * clinical_pair_ratio)), seed=seed + 2027,
                                    max_chars=max_chars) if clinical_pair_ratio > 0 else []
-    n2c2_pairs = load_n2c2_training_pairs(max_samples=int(round(len(real_pii) * n2c2_train_ratio)),
+    n2c2_pairs = load_n2c2_training_pairs(root=n2c2_root,
+                                          max_samples=int(round(len(real_pii) * n2c2_train_ratio)),
                                           max_chars=max_chars, seed=seed) if n2c2_train_ratio > 0 else []
     pii_docs = real_pii + clinical + n2c2_pairs
     natural = (_natural_docs if _natural_docs is not None

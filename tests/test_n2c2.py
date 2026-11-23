@@ -225,6 +225,7 @@ def test_contrastive_corpus_ingests_n2c2_and_local_notes(corpus, tmp_path):
         hard_negative_ratio=1.0,
         clinical_pair_ratio=0.0,
         n2c2_train_ratio=1.0,
+        n2c2_root=str(corpus),
         local_notes_dir=str(fake_notes_dir),
         _pii_docs=mock_pii,
         _natural_docs=[],
